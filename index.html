@@ -11,6 +11,11 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <title>Book Tracker</title>
   <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Firebase SDKs (compat mode for vanilla JS) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -38,10 +43,21 @@
   <!-- App header -->
   <header class="app-header">
     <h1>Book Tracker</h1>
-    <button id="search-open-btn" class="icon-btn" aria-label="Search books">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-    </button>
+    <div class="header-actions">
+      <button id="search-open-btn" class="icon-btn" aria-label="Search books">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      </button>
+      <button id="auth-btn" class="auth-btn" aria-label="Sign in">
+        <svg id="auth-icon-signedout" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <img id="auth-avatar" class="auth-avatar hidden" alt="User" width="28" height="28">
+      </button>
+    </div>
   </header>
+
+  <!-- Sync status bar -->
+  <div id="sync-bar" class="sync-bar hidden">
+    <span id="sync-text">Synced to cloud</span>
+  </div>
 
   <!-- Main content -->
   <main id="list-container" class="list-container"></main>
@@ -69,6 +85,7 @@
   <div id="toast-container" class="toast-container"></div>
 
   <script src="js/db.js"></script>
+  <script src="js/firebase.js"></script>
   <script src="js/api.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/app.js"></script>

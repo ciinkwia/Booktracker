@@ -49,6 +49,54 @@ body {
   font-weight: 600;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.auth-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+}
+
+.auth-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+}
+
+.auth-avatar.hidden {
+  display: none;
+}
+
+#auth-icon-signedout.hidden {
+  display: none;
+}
+
+.sync-bar {
+  background: var(--accent);
+  color: white;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px;
+  flex-shrink: 0;
+  transition: opacity 0.3s;
+}
+
+.sync-bar.hidden {
+  display: none;
+}
+
 .icon-btn {
   background: none;
   border: none;

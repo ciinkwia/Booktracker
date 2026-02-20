@@ -8,8 +8,10 @@
   // ---- Init ----
   async function init() {
     await BookDB.init();
+    BookFirebase.init();
     registerServiceWorker();
     setupEventListeners();
+    setupFirebaseSync();
     await refreshCurrentList();
     await refreshCounts();
   }
@@ -20,6 +22,86 @@
         console.error('SW registration failed:', err);
       });
     }
+  }
+
+  // ---- Firebase Auth & Sync ----
+  function setupFirebaseSync() {
+    BookFirebase.onAuthChange(function (user) {
+      updateAuthUI(user);
+      if (user) {
+        handleSignedIn();
+      }
+    });
+
+    // Real-time sync: when Firestore data changes, update local DB and refresh UI
+    BookFirebase.onSync(async function (cloudBooks) {
+      if (cloudBooks.length > 0) {
+        await BookDB.replaceAllBooks(cloudBooks);
+        await refreshCurrentList();
+        await refreshCounts();
+        showSyncBar('Synced');
+      }
+    });
+  }
+
+  async function handleSignedIn() {
+    showSyncBar('Syncing...');
+    try {
+      var cloudBooks = await BookFirebase.getAllBooks();
+      var localBooks = await BookDB.getAllBooks();
+
+      if (cloudBooks.length === 0 && localBooks.length > 0) {
+        // First sign-in: upload local books to cloud
+        await BookDB.uploadAllToFirebase();
+        showSyncBar('Uploaded to cloud');
+      } else if (cloudBooks.length > 0) {
+        // Cloud has data: merge cloud into local
+        // Cloud is the source of truth, but preserve any local-only books
+        var cloudIds = {};
+        cloudBooks.forEach(function (b) { cloudIds[b.id] = true; });
+
+        // Find local books not in cloud and upload them
+        var localOnly = localBooks.filter(function (b) { return !cloudIds[b.id]; });
+        for (var i = 0; i < localOnly.length; i++) {
+          await BookFirebase.saveBook(localOnly[i]);
+        }
+
+        // Merge: cloud books + local-only books
+        var merged = cloudBooks.concat(localOnly);
+        await BookDB.replaceAllBooks(merged);
+        await refreshCurrentList();
+        await refreshCounts();
+        showSyncBar('Synced');
+      }
+    } catch (err) {
+      console.error('Sync error:', err);
+      showSyncBar('Sync error');
+    }
+  }
+
+  function updateAuthUI(user) {
+    var avatar = document.getElementById('auth-avatar');
+    var icon = document.getElementById('auth-icon-signedout');
+
+    if (user) {
+      avatar.src = user.photoURL || '';
+      avatar.classList.remove('hidden');
+      icon.classList.add('hidden');
+    } else {
+      avatar.classList.add('hidden');
+      icon.classList.remove('hidden');
+    }
+  }
+
+  function showSyncBar(text) {
+    var bar = document.getElementById('sync-bar');
+    var textEl = document.getElementById('sync-text');
+    textEl.textContent = text;
+    bar.classList.remove('hidden');
+    clearTimeout(bar._hideTimer);
+    bar._hideTimer = setTimeout(function () {
+      bar.classList.add('hidden');
+    }, 2500);
   }
 
   // ---- Event Listeners ----
@@ -34,6 +116,26 @@
     // Search open/close
     document.getElementById('search-open-btn').addEventListener('click', openSearch);
     document.getElementById('search-close-btn').addEventListener('click', closeSearch);
+
+    // Auth button
+    document.getElementById('auth-btn').addEventListener('click', async function () {
+      if (BookFirebase.getUser()) {
+        if (confirm('Sign out? Your data is saved in the cloud.')) {
+          await BookFirebase.signOut();
+          BookUI.showToast('Signed out');
+        }
+      } else {
+        try {
+          await BookFirebase.signIn();
+          BookUI.showToast('Signed in');
+        } catch (err) {
+          if (err.code !== 'auth/popup-closed-by-user') {
+            BookUI.showToast('Sign-in failed');
+            console.error('Sign-in error:', err);
+          }
+        }
+      }
+    });
 
     // Search input
     document.getElementById('search-input').addEventListener('input', function (e) {

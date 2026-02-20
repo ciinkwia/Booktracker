@@ -1,4 +1,4 @@
-var CACHE_NAME = 'booktracker-v2';
+var CACHE_NAME = 'booktracker-v3';
 var COVERS_CACHE = 'booktracker-covers-v1';
 var MAX_COVERS = 200;
 
@@ -7,6 +7,7 @@ var STATIC_ASSETS = [
   './index.html',
   './css/styles.css',
   './js/db.js',
+  './js/firebase.js',
   './js/api.js',
   './js/ui.js',
   './js/app.js',
@@ -47,8 +48,16 @@ self.addEventListener('activate', function (event) {
 self.addEventListener('fetch', function (event) {
   var url = new URL(event.request.url);
 
-  // Google Books API: network only (search needs fresh results)
-  if (url.hostname === 'www.googleapis.com') {
+  // Firebase & Google services: always network (auth, Firestore, APIs)
+  if (url.hostname === 'www.googleapis.com' ||
+      url.hostname === 'firestore.googleapis.com' ||
+      url.hostname === 'identitytoolkit.googleapis.com' ||
+      url.hostname === 'securetoken.googleapis.com' ||
+      url.hostname === 'accounts.google.com' ||
+      url.hostname.endsWith('.firebaseio.com') ||
+      url.hostname.endsWith('.firebaseapp.com') ||
+      url.hostname === 'www.gstatic.com' ||
+      url.hostname === 'apis.google.com') {
     return;
   }
 

@@ -46,6 +46,17 @@ window.BookDB = (function () {
     });
   }
 
+  function getAllBooks() {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.getAll();
+
+      request.onsuccess = function () { resolve(request.result || []); };
+      request.onerror = function () { reject(request.error); };
+    });
+  }
+
   function getBook(id) {
     return new Promise(function (resolve, reject) {
       const tx = db.transaction(STORE_NAME, 'readonly');
@@ -87,7 +98,15 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.add(bookData);
 
-        tx.oncomplete = function () { resolve({ success: true }); };
+        tx.oncomplete = function () {
+          // Sync to Firebase
+          if (window.BookFirebase && window.BookFirebase.getUser()) {
+            window.BookFirebase.saveBook(bookData).catch(function (e) {
+              console.warn('Firebase sync failed:', e);
+            });
+          }
+          resolve({ success: true });
+        };
         tx.onerror = function () { reject(tx.error); };
       } catch (err) {
         reject(err);
@@ -109,7 +128,14 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.put(book);
 
-        tx.oncomplete = function () { resolve({ success: true }); };
+        tx.oncomplete = function () {
+          if (window.BookFirebase && window.BookFirebase.getUser()) {
+            window.BookFirebase.saveBook(book).catch(function (e) {
+              console.warn('Firebase sync failed:', e);
+            });
+          }
+          resolve({ success: true });
+        };
         tx.onerror = function () { reject(tx.error); };
       } catch (err) {
         reject(err);
@@ -123,7 +149,14 @@ window.BookDB = (function () {
       const store = tx.objectStore(STORE_NAME);
       store.delete(id);
 
-      tx.oncomplete = function () { resolve({ success: true }); };
+      tx.oncomplete = function () {
+        if (window.BookFirebase && window.BookFirebase.getUser()) {
+          window.BookFirebase.removeBook(id).catch(function (e) {
+            console.warn('Firebase sync failed:', e);
+          });
+        }
+        resolve({ success: true });
+      };
       tx.onerror = function () { reject(tx.error); };
     });
   }
@@ -165,7 +198,14 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.put(book);
 
-        tx.oncomplete = function () { resolve({ success: true }); };
+        tx.oncomplete = function () {
+          if (window.BookFirebase && window.BookFirebase.getUser()) {
+            window.BookFirebase.saveBook(book).catch(function (e) {
+              console.warn('Firebase sync failed:', e);
+            });
+          }
+          resolve({ success: true });
+        };
         tx.onerror = function () { reject(tx.error); };
       } catch (err) {
         reject(err);
@@ -187,7 +227,14 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.put(book);
 
-        tx.oncomplete = function () { resolve({ success: true }); };
+        tx.oncomplete = function () {
+          if (window.BookFirebase && window.BookFirebase.getUser()) {
+            window.BookFirebase.saveBook(book).catch(function (e) {
+              console.warn('Firebase sync failed:', e);
+            });
+          }
+          resolve({ success: true });
+        };
         tx.onerror = function () { reject(tx.error); };
       } catch (err) {
         reject(err);
@@ -195,9 +242,37 @@ window.BookDB = (function () {
     });
   }
 
+  // Replace all local books with data from Firestore (used on sign-in sync)
+  function replaceAllBooks(books) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      store.clear();
+
+      books.forEach(function (book) {
+        store.put(book);
+      });
+
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }
+
+  // Upload all local books to Firestore (used on first sign-in when cloud is empty)
+  function uploadAllToFirebase() {
+    return getAllBooks().then(function (books) {
+      if (!window.BookFirebase || !window.BookFirebase.getUser()) return;
+      var promises = books.map(function (book) {
+        return window.BookFirebase.saveBook(book);
+      });
+      return Promise.all(promises);
+    });
+  }
+
   return {
     init: init,
     getBooksByList: getBooksByList,
+    getAllBooks: getAllBooks,
     getBook: getBook,
     bookExists: bookExists,
     addBook: addBook,
@@ -205,6 +280,8 @@ window.BookDB = (function () {
     removeBook: removeBook,
     getCounts: getCounts,
     updateNotes: updateNotes,
-    updateRating: updateRating
+    updateRating: updateRating,
+    replaceAllBooks: replaceAllBooks,
+    uploadAllToFirebase: uploadAllToFirebase
   };
 })();
