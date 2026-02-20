@@ -25,22 +25,26 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text-primary);
-  display: flex;
-  flex-direction: column;
-  height: 100dvh;
+  margin: 0;
+  padding: 0;
+  min-height: 100dvh;
+  min-height: 100vh;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
 }
 
 /* ---- Header ---- */
 .app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
   height: var(--header-height);
   background: var(--surface);
-  flex-shrink: 0;
   z-index: 10;
 }
 
@@ -83,13 +87,17 @@ body {
 }
 
 .sync-bar {
+  position: fixed;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
   background: var(--accent);
   color: white;
   text-align: center;
   font-size: 12px;
   font-weight: 600;
   padding: 4px;
-  flex-shrink: 0;
+  z-index: 10;
   transition: opacity 0.3s;
 }
 
@@ -116,10 +124,13 @@ body {
 
 /* ---- Main Content ---- */
 .list-container {
-  flex: 1;
+  position: fixed;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: calc(var(--nav-height) + var(--safe-bottom));
   overflow-y: auto;
   padding: 8px 0;
-  padding-bottom: calc(var(--nav-height) + var(--safe-bottom) + 8px);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -224,12 +235,15 @@ body {
 
 /* ---- Bottom Navigation ---- */
 .bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
   display: flex;
   background: var(--surface);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  height: var(--nav-height);
+  height: calc(var(--nav-height) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
-  flex-shrink: 0;
   z-index: 10;
 }
 
@@ -653,7 +667,7 @@ body {
 /* ---- Toast ---- */
 .toast-container {
   position: fixed;
-  bottom: calc(var(--nav-height) + var(--safe-bottom) + 12px);
+  bottom: calc(var(--nav-height) + var(--safe-bottom) + 16px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 300;
