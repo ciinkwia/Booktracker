@@ -1,4 +1,4 @@
-var CACHE_NAME = 'booktracker-v5';
+var CACHE_NAME = 'booktracker-v6';
 var COVERS_CACHE = 'booktracker-covers-v1';
 var MAX_COVERS = 200;
 
@@ -57,7 +57,8 @@ self.addEventListener('fetch', function (event) {
       url.hostname.endsWith('.firebaseio.com') ||
       url.hostname.endsWith('.firebaseapp.com') ||
       url.hostname === 'www.gstatic.com' ||
-      url.hostname === 'apis.google.com') {
+      url.hostname === 'apis.google.com' ||
+      url.hostname === 'openlibrary.org') {
     return;
   }
 
