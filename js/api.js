@@ -22,7 +22,7 @@ window.BookAPI = (function () {
     var url = GOOGLE_BOOKS_URL + '?q=' + encodeURIComponent(q) +
       '&maxResults=' + RESULTS_LIMIT + '&printType=books';
 
-    return fetch(url)
+    return fetch(url, { mode: 'cors' })
       .then(function (response) {
         if (!response.ok) throw new Error('Search failed: ' + response.status);
         return response.json();

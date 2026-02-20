@@ -259,6 +259,7 @@
       resultsEl.innerHTML = htmlParts.join('');
       statusEl.textContent = results.length + ' result' + (results.length !== 1 ? 's' : '');
     } catch (err) {
+      console.error('Search error details:', err);
       if (!navigator.onLine) {
         statusEl.textContent = 'You are offline. Search requires an internet connection.';
       } else {
