@@ -125,8 +125,18 @@
           BookUI.showToast('Signed out');
         }
       } else {
-        // signInWithRedirect will navigate away then come back
-        BookFirebase.signIn();
+        try {
+          await BookFirebase.signIn();
+          BookUI.showToast('Signed in');
+        } catch (err) {
+          console.error('Sign-in error:', err);
+          if (err.code === 'auth/unauthorized-domain') {
+            BookUI.showToast('Domain not authorized in Firebase');
+          } else if (err.code !== 'auth/popup-closed-by-user' &&
+                     err.code !== 'auth/cancelled-popup-request') {
+            BookUI.showToast('Sign-in error: ' + (err.code || err.message));
+          }
+        }
       }
     });
 

@@ -28,11 +28,6 @@ window.BookFirebase = (function () {
       console.warn('Firestore persistence error:', err.code);
     });
 
-    // Check for redirect result (from signInWithRedirect)
-    auth.getRedirectResult().catch(function (err) {
-      console.warn('Redirect result error:', err);
-    });
-
     // Listen for auth changes
     auth.onAuthStateChanged(function (user) {
       currentUser = user;
@@ -48,7 +43,16 @@ window.BookFirebase = (function () {
 
   function signIn() {
     var provider = new firebase.auth.GoogleAuthProvider();
-    return auth.signInWithRedirect(provider);
+    // Try popup first, fall back to redirect if popup is blocked
+    return auth.signInWithPopup(provider).catch(function (err) {
+      console.warn('Popup sign-in failed, trying redirect:', err.code);
+      if (err.code === 'auth/popup-blocked' ||
+          err.code === 'auth/popup-closed-by-user' ||
+          err.code === 'auth/cancelled-popup-request') {
+        return auth.signInWithRedirect(provider);
+      }
+      throw err;
+    });
   }
 
   function signOut() {
