@@ -28,6 +28,11 @@ window.BookFirebase = (function () {
       console.warn('Firestore persistence error:', err.code);
     });
 
+    // Check for redirect result (from signInWithRedirect)
+    auth.getRedirectResult().catch(function (err) {
+      console.warn('Redirect result error:', err);
+    });
+
     // Listen for auth changes
     auth.onAuthStateChanged(function (user) {
       currentUser = user;
@@ -43,7 +48,7 @@ window.BookFirebase = (function () {
 
   function signIn() {
     var provider = new firebase.auth.GoogleAuthProvider();
-    return auth.signInWithPopup(provider);
+    return auth.signInWithRedirect(provider);
   }
 
   function signOut() {

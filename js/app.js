@@ -125,15 +125,8 @@
           BookUI.showToast('Signed out');
         }
       } else {
-        try {
-          await BookFirebase.signIn();
-          BookUI.showToast('Signed in');
-        } catch (err) {
-          if (err.code !== 'auth/popup-closed-by-user') {
-            BookUI.showToast('Sign-in failed');
-            console.error('Sign-in error:', err);
-          }
-        }
+        // signInWithRedirect will navigate away then come back
+        BookFirebase.signIn();
       }
     });
 
