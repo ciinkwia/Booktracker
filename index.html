@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#6C63FF">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <title>Book Tracker</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- Search overlay -->
+  <div id="search-overlay" class="search-overlay hidden">
+    <div class="search-header">
+      <button id="search-close-btn" class="icon-btn" aria-label="Close search">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </button>
+      <input id="search-input" type="text" placeholder="Search by title, author, or ISBN..." autocomplete="off">
+    </div>
+    <div id="search-status" class="search-status"></div>
+    <div id="search-results" class="search-results"></div>
+  </div>
+
+  <!-- Book detail modal -->
+  <div id="book-detail-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-handle"></div>
+      <div id="book-detail-body"></div>
+    </div>
+  </div>
+
+  <!-- App header -->
+  <header class="app-header">
+    <h1>Book Tracker</h1>
+    <button id="search-open-btn" class="icon-btn" aria-label="Search books">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+    </button>
+  </header>
+
+  <!-- Main content -->
+  <main id="list-container" class="list-container"></main>
+
+  <!-- Bottom tab navigation -->
+  <nav class="bottom-nav">
+    <button class="tab-btn active" data-list="wantToRead">
+      <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      <span class="tab-label">Want to Read</span>
+      <span class="tab-count" id="count-wantToRead"></span>
+    </button>
+    <button class="tab-btn" data-list="read">
+      <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="tab-label">Read</span>
+      <span class="tab-count" id="count-read"></span>
+    </button>
+    <button class="tab-btn" data-list="own">
+      <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span class="tab-label">My Library</span>
+      <span class="tab-count" id="count-own"></span>
+    </button>
+  </nav>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="js/db.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
