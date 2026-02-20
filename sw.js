@@ -1,4 +1,4 @@
-var CACHE_NAME = 'booktracker-v1';
+var CACHE_NAME = 'booktracker-v2';
 var COVERS_CACHE = 'booktracker-covers-v1';
 var MAX_COVERS = 200;
 
@@ -47,13 +47,13 @@ self.addEventListener('activate', function (event) {
 self.addEventListener('fetch', function (event) {
   var url = new URL(event.request.url);
 
-  // Open Library API: network only (search needs fresh results)
-  if (url.hostname === 'openlibrary.org') {
+  // Google Books API: network only (search needs fresh results)
+  if (url.hostname === 'www.googleapis.com') {
     return;
   }
 
   // Cover images: network first, cache fallback
-  if (url.hostname === 'covers.openlibrary.org') {
+  if (url.hostname === 'books.google.com' || url.hostname === 'covers.openlibrary.org') {
     event.respondWith(
       fetch(event.request).then(function (response) {
         if (response.ok) {

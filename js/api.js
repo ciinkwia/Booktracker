@@ -1,9 +1,7 @@
 window.BookAPI = (function () {
   'use strict';
 
-  var SEARCH_URL = 'https://openlibrary.org/search.json';
-  var COVER_URL = 'https://covers.openlibrary.org/b/id';
-  var FIELDS = 'key,title,author_name,first_publish_year,isbn,cover_i,number_of_pages_median';
+  var GOOGLE_BOOKS_URL = 'https://www.googleapis.com/books/v1/volumes';
   var RESULTS_LIMIT = 20;
 
   function isISBN(query) {
@@ -14,15 +12,15 @@ window.BookAPI = (function () {
   function search(query) {
     if (!query.trim()) return Promise.resolve([]);
 
-    var url;
+    var q;
     if (isISBN(query)) {
-      var cleaned = query.replace(/[-\s]/g, '');
-      url = SEARCH_URL + '?isbn=' + encodeURIComponent(cleaned) +
-        '&fields=' + FIELDS + '&limit=' + RESULTS_LIMIT;
+      q = 'isbn:' + query.replace(/[-\s]/g, '');
     } else {
-      url = SEARCH_URL + '?q=' + encodeURIComponent(query) +
-        '&fields=' + FIELDS + '&limit=' + RESULTS_LIMIT;
+      q = query;
     }
+
+    var url = GOOGLE_BOOKS_URL + '?q=' + encodeURIComponent(q) +
+      '&maxResults=' + RESULTS_LIMIT + '&printType=books';
 
     return fetch(url)
       .then(function (response) {
@@ -30,32 +28,45 @@ window.BookAPI = (function () {
         return response.json();
       })
       .then(function (data) {
-        return (data.docs || []).map(normalizeResult);
+        if (!data.items) return [];
+        return data.items.map(normalizeResult);
       });
   }
 
-  function normalizeResult(doc) {
-    return {
-      id: doc.key,
-      title: doc.title || 'Unknown Title',
-      authors: doc.author_name || ['Unknown Author'],
-      isbn: (doc.isbn && doc.isbn[0]) || null,
-      coverUrl: doc.cover_i
-        ? COVER_URL + '/' + doc.cover_i + '-M.jpg'
-        : null,
-      publishYear: doc.first_publish_year || null,
-      pageCount: doc.number_of_pages_median || null
-    };
-  }
+  function normalizeResult(item) {
+    var info = item.volumeInfo || {};
+    var isbn = null;
 
-  function getCoverUrl(coverId, size) {
-    if (!coverId) return null;
-    return COVER_URL + '/' + coverId + '-' + (size || 'M') + '.jpg';
+    if (info.industryIdentifiers) {
+      // Prefer ISBN_13, fall back to ISBN_10
+      for (var i = 0; i < info.industryIdentifiers.length; i++) {
+        var id = info.industryIdentifiers[i];
+        if (id.type === 'ISBN_13') { isbn = id.identifier; break; }
+        if (id.type === 'ISBN_10' && !isbn) { isbn = id.identifier; }
+      }
+    }
+
+    var coverUrl = null;
+    if (info.imageLinks) {
+      // Use thumbnail and upgrade to a better size
+      coverUrl = (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || '')
+        .replace('http://', 'https://')
+        .replace('&edge=curl', '');
+    }
+
+    return {
+      id: 'gbooks:' + item.id,
+      title: info.title || 'Unknown Title',
+      authors: info.authors || ['Unknown Author'],
+      isbn: isbn,
+      coverUrl: coverUrl,
+      publishYear: info.publishedDate ? parseInt(info.publishedDate.substring(0, 4), 10) || null : null,
+      pageCount: info.pageCount || null
+    };
   }
 
   return {
     search: search,
-    isISBN: isISBN,
-    getCoverUrl: getCoverUrl
+    isISBN: isISBN
   };
 })();
