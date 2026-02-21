@@ -4,6 +4,8 @@
   var currentList = 'wantToRead';
   var searchDebounceTimer = null;
   var DEBOUNCE_MS = 400;
+  var syncInProgress = false;
+  var initialSyncDone = false;
 
   // ---- Init ----
   async function init() {
@@ -30,40 +32,78 @@
       updateAuthUI(user);
       if (user) {
         handleSignedIn();
+      } else {
+        // Reset sync state on sign-out
+        syncInProgress = false;
+        initialSyncDone = false;
       }
     });
 
     // Real-time sync: when Firestore data changes, update local DB and refresh UI
+    // This only handles ONGOING sync after initial merge is done
     BookFirebase.onSync(async function (cloudBooks) {
-      if (cloudBooks.length > 0) {
-        await BookDB.replaceAllBooks(cloudBooks);
-        await refreshCurrentList();
-        await refreshCounts();
-        showSyncBar('Synced');
+      // Don't process snapshots until initial sign-in merge is complete
+      // This prevents race conditions where an early snapshot overwrites local data
+      if (!initialSyncDone) return;
+
+      // Don't process if we're in the middle of our own writes
+      if (syncInProgress) return;
+
+      // Safety: never wipe local data with an empty cloud snapshot
+      // (could happen during network hiccups or Firestore eventual consistency)
+      if (cloudBooks.length === 0) {
+        var localBooks = await BookDB.getAllBooks();
+        if (localBooks.length > 0) {
+          console.warn('Ignoring empty cloud snapshot — local DB has', localBooks.length, 'books');
+          return;
+        }
       }
+
+      await BookDB.replaceAllBooks(cloudBooks);
+      await refreshCurrentList();
+      await refreshCounts();
     });
   }
 
   async function handleSignedIn() {
+    if (syncInProgress) return;
+    syncInProgress = true;
     showSyncBar('Syncing...');
+
     try {
       var cloudBooks = await BookFirebase.getAllBooks();
       var localBooks = await BookDB.getAllBooks();
 
       if (cloudBooks.length === 0 && localBooks.length > 0) {
-        // First sign-in: upload local books to cloud
-        await BookDB.uploadAllToFirebase();
-        showSyncBar('Uploaded to cloud');
+        // First sign-in: upload all local books to cloud
+        var uploadErrors = 0;
+        for (var i = 0; i < localBooks.length; i++) {
+          try {
+            await BookFirebase.saveBook(localBooks[i]);
+          } catch (e) {
+            uploadErrors++;
+            console.error('Failed to upload book:', localBooks[i].title, e);
+          }
+        }
+        if (uploadErrors > 0) {
+          showSyncBar(uploadErrors + ' book(s) failed to upload');
+        } else {
+          showSyncBar('Uploaded ' + localBooks.length + ' book(s) to cloud');
+        }
+
       } else if (cloudBooks.length > 0) {
-        // Cloud has data: merge cloud into local
-        // Cloud is the source of truth, but preserve any local-only books
-        var cloudIds = {};
-        cloudBooks.forEach(function (b) { cloudIds[b.id] = true; });
+        // Cloud has data: merge
+        var cloudMap = {};
+        cloudBooks.forEach(function (b) { cloudMap[b.id] = b; });
 
         // Find local books not in cloud and upload them
-        var localOnly = localBooks.filter(function (b) { return !cloudIds[b.id]; });
-        for (var i = 0; i < localOnly.length; i++) {
-          await BookFirebase.saveBook(localOnly[i]);
+        var localOnly = localBooks.filter(function (b) { return !cloudMap[b.id]; });
+        for (var j = 0; j < localOnly.length; j++) {
+          try {
+            await BookFirebase.saveBook(localOnly[j]);
+          } catch (e) {
+            console.error('Failed to upload local-only book:', localOnly[j].title, e);
+          }
         }
 
         // Merge: cloud books + local-only books
@@ -71,11 +111,18 @@
         await BookDB.replaceAllBooks(merged);
         await refreshCurrentList();
         await refreshCounts();
+        showSyncBar('Synced ' + merged.length + ' book(s)');
+
+      } else {
+        // Both empty, nothing to do
         showSyncBar('Synced');
       }
     } catch (err) {
       console.error('Sync error:', err);
-      showSyncBar('Sync error');
+      showSyncBar('Sync error — data saved locally');
+    } finally {
+      syncInProgress = false;
+      initialSyncDone = true;
     }
   }
 
@@ -101,7 +148,7 @@
     clearTimeout(bar._hideTimer);
     bar._hideTimer = setTimeout(function () {
       bar.classList.add('hidden');
-    }, 2500);
+    }, 3000);
   }
 
   // ---- Event Listeners ----

@@ -98,13 +98,9 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.add(bookData);
 
-        tx.oncomplete = function () {
-          // Sync to Firebase
-          if (window.BookFirebase && window.BookFirebase.getUser()) {
-            window.BookFirebase.saveBook(bookData).catch(function (e) {
-              console.warn('Firebase sync failed:', e);
-            });
-          }
+        tx.oncomplete = async function () {
+          // Sync to Firebase — await it so we know if it worked
+          await syncToFirebase(bookData);
           resolve({ success: true });
         };
         tx.onerror = function () { reject(tx.error); };
@@ -128,12 +124,8 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.put(book);
 
-        tx.oncomplete = function () {
-          if (window.BookFirebase && window.BookFirebase.getUser()) {
-            window.BookFirebase.saveBook(book).catch(function (e) {
-              console.warn('Firebase sync failed:', e);
-            });
-          }
+        tx.oncomplete = async function () {
+          await syncToFirebase(book);
           resolve({ success: true });
         };
         tx.onerror = function () { reject(tx.error); };
@@ -149,11 +141,14 @@ window.BookDB = (function () {
       const store = tx.objectStore(STORE_NAME);
       store.delete(id);
 
-      tx.oncomplete = function () {
+      tx.oncomplete = async function () {
+        // Sync removal to Firebase
         if (window.BookFirebase && window.BookFirebase.getUser()) {
-          window.BookFirebase.removeBook(id).catch(function (e) {
-            console.warn('Firebase sync failed:', e);
-          });
+          try {
+            await window.BookFirebase.removeBook(id);
+          } catch (e) {
+            console.warn('Firebase remove sync failed (book still removed locally):', e);
+          }
         }
         resolve({ success: true });
       };
@@ -198,12 +193,8 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.put(book);
 
-        tx.oncomplete = function () {
-          if (window.BookFirebase && window.BookFirebase.getUser()) {
-            window.BookFirebase.saveBook(book).catch(function (e) {
-              console.warn('Firebase sync failed:', e);
-            });
-          }
+        tx.oncomplete = async function () {
+          await syncToFirebase(book);
           resolve({ success: true });
         };
         tx.onerror = function () { reject(tx.error); };
@@ -227,12 +218,8 @@ window.BookDB = (function () {
         const store = tx.objectStore(STORE_NAME);
         store.put(book);
 
-        tx.oncomplete = function () {
-          if (window.BookFirebase && window.BookFirebase.getUser()) {
-            window.BookFirebase.saveBook(book).catch(function (e) {
-              console.warn('Firebase sync failed:', e);
-            });
-          }
+        tx.oncomplete = async function () {
+          await syncToFirebase(book);
           resolve({ success: true });
         };
         tx.onerror = function () { reject(tx.error); };
@@ -240,6 +227,17 @@ window.BookDB = (function () {
         reject(err);
       }
     });
+  }
+
+  // Helper: sync a book save to Firebase if signed in
+  async function syncToFirebase(book) {
+    if (window.BookFirebase && window.BookFirebase.getUser()) {
+      try {
+        await window.BookFirebase.saveBook(book);
+      } catch (e) {
+        console.warn('Firebase sync failed (data saved locally):', e);
+      }
+    }
   }
 
   // Replace all local books with data from Firestore (used on sign-in sync)
