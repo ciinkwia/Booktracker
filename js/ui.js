@@ -120,6 +120,21 @@ window.BookUI = (function () {
     '</div>';
   }
 
+  function renderManualAddForm() {
+    return '<div class="manual-add-section">' +
+      '<div class="manual-add-header">Can\'t find your book? Add it manually</div>' +
+      '<div class="manual-add-form">' +
+        '<input type="text" id="manual-title" placeholder="Book title (required)" autocomplete="off">' +
+        '<input type="text" id="manual-author" placeholder="Author (required)" autocomplete="off">' +
+        '<div class="manual-add-buttons">' +
+          '<button class="add-btn" data-action="manual-add" data-list="wantToRead" disabled>Want to Read</button>' +
+          '<button class="add-btn" data-action="manual-add" data-list="read" disabled>Read</button>' +
+          '<button class="add-btn" data-action="manual-add" data-list="own" disabled>My Library</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
   function renderBookDetail(book) {
     var authors = escapeHtml((book.authors || []).join(', '));
     var meta = [];
@@ -268,6 +283,7 @@ window.BookUI = (function () {
     showToast: showToast,
     clearSearchCache: clearSearchCache,
     getCachedResult: getCachedResult,
+    renderManualAddForm: renderManualAddForm,
     LIST_NAMES: LIST_NAMES
   };
 })();

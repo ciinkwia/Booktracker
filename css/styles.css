@@ -722,6 +722,66 @@ body {
   font-size: 14px;
 }
 
+/* ---- Manual Add Form ---- */
+.manual-add-section {
+  margin: 16px 12px;
+  padding: 16px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1.5px dashed rgba(255, 255, 255, 0.15);
+}
+
+.manual-add-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.manual-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manual-add-form input {
+  height: 40px;
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.manual-add-form input:focus {
+  border-color: var(--accent);
+}
+
+.manual-add-form input::placeholder {
+  color: var(--text-secondary);
+}
+
+.manual-add-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.manual-add-buttons .add-btn {
+  flex: 1;
+  text-align: center;
+}
+
+.manual-add-buttons .add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ---- Utilities ---- */
 .hidden {
   pointer-events: none;

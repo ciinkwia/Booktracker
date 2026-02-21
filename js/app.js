@@ -293,7 +293,8 @@
 
       if (results.length === 0) {
         resultsEl.innerHTML = '<p class="no-results">No books found for "' +
-          query.replace(/</g, '&lt;') + '"</p>';
+          query.replace(/</g, '&lt;') + '"</p>' + BookUI.renderManualAddForm();
+        wireManualAddForm();
         statusEl.textContent = '';
         return;
       }
@@ -303,7 +304,10 @@
         var existing = await BookDB.bookExists(results[i].id);
         htmlParts.push(BookUI.renderSearchResult(results[i], existing.list));
       }
+      // Always append the manual add form at the bottom of results
+      htmlParts.push(BookUI.renderManualAddForm());
       resultsEl.innerHTML = htmlParts.join('');
+      wireManualAddForm();
       statusEl.textContent = results.length + ' result' + (results.length !== 1 ? 's' : '');
     } catch (err) {
       console.error('Search error details:', err);
@@ -422,6 +426,59 @@
       await BookDB.updateNotes(bookId, textarea.value);
       BookUI.showToast('Notes saved');
     }
+  }
+
+  // ---- Manual Add ----
+  function wireManualAddForm() {
+    var titleInput = document.getElementById('manual-title');
+    var authorInput = document.getElementById('manual-author');
+    if (!titleInput || !authorInput) return;
+
+    var buttons = document.querySelectorAll('[data-action="manual-add"]');
+
+    function updateButtons() {
+      var enabled = titleInput.value.trim() !== '' && authorInput.value.trim() !== '';
+      buttons.forEach(function (btn) { btn.disabled = !enabled; });
+    }
+
+    titleInput.addEventListener('input', updateButtons);
+    authorInput.addEventListener('input', updateButtons);
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        var title = titleInput.value.trim();
+        var author = authorInput.value.trim();
+        if (!title || !author) return;
+
+        var listName = btn.dataset.list;
+        var bookId = 'manual:' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+        var result = await BookDB.addBook({
+          id: bookId,
+          title: title,
+          authors: [author],
+          isbn: null,
+          coverUrl: null,
+          publishYear: null,
+          pageCount: null,
+          list: listName,
+          dateAdded: Date.now(),
+          notes: '',
+          rating: 0
+        });
+
+        if (result.success) {
+          BookUI.showToast('Added "' + title + '" to ' + BookUI.LIST_NAMES[listName]);
+          titleInput.value = '';
+          authorInput.value = '';
+          updateButtons();
+          await refreshCounts();
+          if (listName === currentList) {
+            await refreshCurrentList();
+          }
+        }
+      });
+    });
   }
 
   // ---- Start ----
