@@ -183,12 +183,19 @@ window.BookUI = (function () {
       }
     });
 
-    // Sort books within a group: by author first, then title
+    // Extract last name from full author name (e.g. "Robert Greene" → "greene")
+    function getLastName(authorStr) {
+      if (!authorStr) return '';
+      var parts = authorStr.trim().split(/\s+/);
+      return parts[parts.length - 1].toLowerCase();
+    }
+
+    // Sort books within a group: by author last name first, then title
     function sortByAuthorTitle(a, b) {
-      var authorA = (a.authors || [''])[0].toLowerCase();
-      var authorB = (b.authors || [''])[0].toLowerCase();
-      if (authorA < authorB) return -1;
-      if (authorA > authorB) return 1;
+      var lastA = getLastName((a.authors || [''])[0]);
+      var lastB = getLastName((b.authors || [''])[0]);
+      if (lastA < lastB) return -1;
+      if (lastA > lastB) return 1;
       var titleA = (a.title || '').toLowerCase();
       var titleB = (b.title || '').toLowerCase();
       if (titleA < titleB) return -1;
