@@ -63,6 +63,13 @@ window.BookUI = (function () {
     var authors = escapeHtml((book.authors || []).join(', '));
     var year = book.publishYear ? ' &middot; ' + book.publishYear : '';
     var showStars = book.list === 'read' || book.list === 'own';
+    var cats = book.categories || [];
+    var catBadges = '';
+    if (book.list === 'own' && cats.length > 0) {
+      catBadges = '<div class="book-cat-badges">' +
+        cats.map(function (c) { return '<span class="book-cat-badge">' + escapeHtml(c) + '</span>'; }).join('') +
+      '</div>';
+    }
 
     return '<div class="book-card" data-book-id="' + escapeHtml(book.id) + '">' +
       renderCover(book.coverUrl, book.title, 'small') +
@@ -70,6 +77,7 @@ window.BookUI = (function () {
         '<div class="book-title">' + escapeHtml(book.title) + '</div>' +
         '<div class="book-author">' + authors + '</div>' +
         (year ? '<div class="book-year">' + year + '</div>' : '') +
+        catBadges +
         (showStars ? renderStars(book.rating, 'small') : '') +
       '</div>' +
     '</div>';
@@ -135,7 +143,106 @@ window.BookUI = (function () {
     '</div>';
   }
 
-  function renderBookDetail(book) {
+  function renderCategoryPicker(bookId, selectedCategories, allCategories) {
+    var selected = selectedCategories || [];
+    var html = '<div class="detail-section">' +
+      '<div class="detail-section-title">Categories (up to 2)</div>' +
+      '<div class="category-picker" data-book-id="' + escapeHtml(bookId) + '">';
+    for (var i = 0; i < allCategories.length; i++) {
+      var cat = allCategories[i];
+      var isSelected = selected.indexOf(cat) !== -1;
+      html += '<button class="cat-chip' + (isSelected ? ' cat-chip-selected' : '') +
+        '" data-action="toggle-category" data-category="' + escapeHtml(cat) +
+        '" data-book-id="' + escapeHtml(bookId) + '">' +
+        escapeHtml(cat) + '</button>';
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderCategoryGroupedList(books, categories) {
+    var groups = {};
+    var uncategorized = [];
+
+    // Initialize groups in user-defined order
+    categories.forEach(function (cat) { groups[cat] = []; });
+
+    books.forEach(function (book) {
+      var cats = book.categories || [];
+      if (cats.length === 0) {
+        uncategorized.push(book);
+      } else {
+        cats.forEach(function (cat) {
+          if (groups[cat]) {
+            groups[cat].push(book);
+          } else {
+            // Category was deleted but book still has it — treat as uncategorized
+            uncategorized.push(book);
+          }
+        });
+      }
+    });
+
+    var html = '';
+    // Render in user-defined order
+    categories.forEach(function (cat) {
+      if (groups[cat] && groups[cat].length > 0) {
+        html += '<div class="category-group">' +
+          '<div class="category-header">' + escapeHtml(cat) + '</div>' +
+          groups[cat].map(renderBookCard).join('') +
+        '</div>';
+      }
+    });
+
+    if (uncategorized.length > 0) {
+      html += '<div class="category-group">' +
+        '<div class="category-header">Uncategorized</div>' +
+        uncategorized.map(renderBookCard).join('') +
+      '</div>';
+    }
+
+    return html;
+  }
+
+  function renderCategoryManager(categories) {
+    var html = '<div class="cat-manager-header">' +
+      '<span>Manage Categories</span>' +
+      '<button class="icon-btn" data-action="close-cat-manager" aria-label="Close">' +
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button>' +
+    '</div>';
+
+    html += '<div class="cat-manager-add">' +
+      '<input type="text" id="new-category-input" placeholder="New category name..." autocomplete="off">' +
+      '<button class="cat-add-btn" data-action="add-category">Add</button>' +
+    '</div>';
+
+    html += '<div class="cat-manager-list">';
+    for (var i = 0; i < categories.length; i++) {
+      var cat = categories[i];
+      html += '<div class="cat-manager-item" data-index="' + i + '">' +
+        '<div class="cat-manager-arrows">' +
+          '<button class="cat-arrow-btn" data-action="move-cat-up" data-index="' + i + '"' +
+            (i === 0 ? ' disabled' : '') + '>' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>' +
+          '</button>' +
+          '<button class="cat-arrow-btn" data-action="move-cat-down" data-index="' + i + '"' +
+            (i === categories.length - 1 ? ' disabled' : '') + '>' +
+            '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>' +
+          '</button>' +
+        '</div>' +
+        '<span class="cat-manager-name">' + escapeHtml(cat) + '</span>' +
+        '<button class="cat-delete-btn" data-action="delete-category" data-category="' + escapeHtml(cat) + '">' +
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
+        '</button>' +
+      '</div>';
+    }
+    html += '</div>';
+
+    return html;
+  }
+
+  function renderBookDetail(book, allCategories) {
     var authors = escapeHtml((book.authors || []).join(', '));
     var meta = [];
     if (book.publishYear) meta.push('Published: ' + book.publishYear);
@@ -164,6 +271,11 @@ window.BookUI = (function () {
       '</div>';
     }
 
+    var categoryHtml = '';
+    if (book.list === 'own' && allCategories && allCategories.length > 0) {
+      categoryHtml = renderCategoryPicker(book.id, book.categories || [], allCategories);
+    }
+
     return '<div class="detail-header">' +
       renderCover(book.coverUrl, book.title, 'large') +
       '<div class="detail-info">' +
@@ -174,6 +286,8 @@ window.BookUI = (function () {
     '</div>' +
 
     ratingHtml +
+
+    categoryHtml +
 
     '<div class="detail-section">' +
       '<div class="detail-section-title">Notes</div>' +
@@ -210,12 +324,25 @@ window.BookUI = (function () {
     '</div>';
   }
 
-  function renderBookList(books, listName, container) {
+  function renderBookList(books, listName, container, categories) {
     if (!books || books.length === 0) {
       container.innerHTML = renderEmptyState(listName);
       return;
     }
-    container.innerHTML = books.map(renderBookCard).join('');
+    var manageBtnHtml = '';
+    if (listName === 'own') {
+      manageBtnHtml = '<div class="manage-cat-bar">' +
+        '<button id="manage-cat-btn" class="manage-cat-btn">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' +
+          ' Manage Categories' +
+        '</button>' +
+      '</div>';
+    }
+    if (listName === 'own' && categories && categories.length > 0) {
+      container.innerHTML = manageBtnHtml + renderCategoryGroupedList(books, categories);
+    } else {
+      container.innerHTML = manageBtnHtml + books.map(renderBookCard).join('');
+    }
   }
 
   function updateCounts(counts) {
@@ -245,10 +372,10 @@ window.BookUI = (function () {
     }, 300);
   }
 
-  function showDetail(book) {
+  function showDetail(book, allCategories) {
     var modal = document.getElementById('book-detail-modal');
     var body = document.getElementById('book-detail-body');
-    body.innerHTML = renderBookDetail(book);
+    body.innerHTML = renderBookDetail(book, allCategories);
     modal.classList.remove('hidden');
   }
 
@@ -284,6 +411,7 @@ window.BookUI = (function () {
     clearSearchCache: clearSearchCache,
     getCachedResult: getCachedResult,
     renderManualAddForm: renderManualAddForm,
+    renderCategoryManager: renderCategoryManager,
     LIST_NAMES: LIST_NAMES
   };
 })();

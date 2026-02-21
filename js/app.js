@@ -71,6 +71,18 @@
     showSyncBar('Syncing...');
 
     try {
+      // Sync categories from cloud
+      var cloudSettings = await BookFirebase.getSettings();
+      if (cloudSettings && cloudSettings.categories) {
+        await BookDB.saveCategories(cloudSettings.categories);
+      } else {
+        // Upload local categories to cloud
+        var localCats = await BookDB.getCategories();
+        if (localCats.length > 0) {
+          await BookFirebase.saveSettings({ categories: localCats });
+        }
+      }
+
       var cloudBooks = await BookFirebase.getAllBooks();
       var localBooks = await BookDB.getAllBooks();
 
@@ -254,12 +266,22 @@
   async function refreshCurrentList() {
     var books = await BookDB.getBooksByList(currentList);
     var container = document.getElementById('list-container');
-    BookUI.renderBookList(books, currentList, container);
+    var categories = null;
+    if (currentList === 'own') {
+      categories = await BookDB.getCategories();
+    }
+    BookUI.renderBookList(books, currentList, container, categories);
 
     // Wire up empty state search button if present
     var emptyBtn = document.getElementById('empty-search-btn');
     if (emptyBtn) {
       emptyBtn.addEventListener('click', openSearch);
+    }
+
+    // Wire up manage categories button if present (shown on own list)
+    var manageCatBtn = document.getElementById('manage-cat-btn');
+    if (manageCatBtn) {
+      manageCatBtn.addEventListener('click', openCategoryManager);
     }
   }
 
@@ -341,7 +363,8 @@
       list: listName,
       dateAdded: Date.now(),
       notes: '',
-      rating: 0
+      rating: 0,
+      categories: []
     });
 
     if (result.success) {
@@ -368,7 +391,8 @@
   async function openDetail(bookId) {
     var book = await BookDB.getBook(bookId);
     if (!book) return;
-    BookUI.showDetail(book);
+    var categories = await BookDB.getCategories();
+    BookUI.showDetail(book, categories);
   }
 
   // ---- Detail Modal Actions ----
@@ -382,7 +406,8 @@
         var rating = parseInt(star.dataset.star, 10);
         await BookDB.updateRating(ratingBookId, rating);
         var updatedBook = await BookDB.getBook(ratingBookId);
-        if (updatedBook) BookUI.showDetail(updatedBook);
+        var cats = await BookDB.getCategories();
+        if (updatedBook) BookUI.showDetail(updatedBook, cats);
         await refreshCurrentList();
         BookUI.showToast('Rated ' + rating + ' star' + (rating !== 1 ? 's' : ''));
       }
@@ -395,7 +420,29 @@
     var action = btn.dataset.action;
     var bookId = btn.dataset.bookId;
 
-    if (action === 'move') {
+    if (action === 'toggle-category') {
+      var category = btn.dataset.category;
+      var book = await BookDB.getBook(bookId);
+      if (!book) return;
+      var current = book.categories || [];
+      var idx = current.indexOf(category);
+      if (idx !== -1) {
+        // Deselect
+        current.splice(idx, 1);
+      } else {
+        if (current.length >= 2) {
+          BookUI.showToast('Maximum 2 categories');
+          return;
+        }
+        current.push(category);
+      }
+      await BookDB.updateBookCategories(bookId, current);
+      var updated = await BookDB.getBook(bookId);
+      var allCats = await BookDB.getCategories();
+      if (updated) BookUI.showDetail(updated, allCats);
+      await refreshCurrentList();
+
+    } else if (action === 'move') {
       var newList = btn.dataset.list;
       await BookDB.moveBook(bookId, newList);
       BookUI.showToast('Moved to ' + BookUI.LIST_NAMES[newList]);
@@ -425,6 +472,96 @@
       var textarea = document.getElementById('book-notes');
       await BookDB.updateNotes(bookId, textarea.value);
       BookUI.showToast('Notes saved');
+    }
+  }
+
+  // ---- Category Manager ----
+  async function openCategoryManager() {
+    var categories = await BookDB.getCategories();
+    var overlay = document.getElementById('cat-manager-overlay');
+    var body = document.getElementById('cat-manager-body');
+    body.innerHTML = BookUI.renderCategoryManager(categories);
+    overlay.classList.remove('hidden');
+    overlay.classList.add('visible');
+    wireCategoryManagerEvents();
+  }
+
+  function closeCategoryManager() {
+    var overlay = document.getElementById('cat-manager-overlay');
+    overlay.classList.remove('visible');
+    setTimeout(function () {
+      overlay.classList.add('hidden');
+    }, 300);
+  }
+
+  function wireCategoryManagerEvents() {
+    var body = document.getElementById('cat-manager-body');
+
+    body.onclick = async function (event) {
+      var btn = event.target.closest('[data-action]');
+      if (!btn) return;
+
+      var action = btn.dataset.action;
+
+      if (action === 'close-cat-manager') {
+        closeCategoryManager();
+        await refreshCurrentList();
+
+      } else if (action === 'add-category') {
+        var input = document.getElementById('new-category-input');
+        var name = input.value.trim();
+        if (!name) return;
+        var cats = await BookDB.getCategories();
+        if (cats.indexOf(name) !== -1) {
+          BookUI.showToast('Category already exists');
+          return;
+        }
+        cats.push(name);
+        await BookDB.saveCategories(cats);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+        BookUI.showToast('Added "' + name + '"');
+
+      } else if (action === 'delete-category') {
+        var catName = btn.dataset.category;
+        if (!confirm('Delete "' + catName + '"? It will be removed from all books.')) return;
+        var cats = await BookDB.getCategories();
+        cats = cats.filter(function (c) { return c !== catName; });
+        await BookDB.saveCategories(cats);
+        await BookDB.removeCategoryFromAllBooks(catName);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+        BookUI.showToast('Deleted "' + catName + '"');
+
+      } else if (action === 'move-cat-up') {
+        var idx = parseInt(btn.dataset.index, 10);
+        if (idx <= 0) return;
+        var cats = await BookDB.getCategories();
+        var temp = cats[idx - 1];
+        cats[idx - 1] = cats[idx];
+        cats[idx] = temp;
+        await BookDB.saveCategories(cats);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+
+      } else if (action === 'move-cat-down') {
+        var idx = parseInt(btn.dataset.index, 10);
+        var cats = await BookDB.getCategories();
+        if (idx >= cats.length - 1) return;
+        var temp = cats[idx + 1];
+        cats[idx + 1] = cats[idx];
+        cats[idx] = temp;
+        await BookDB.saveCategories(cats);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+      }
+    };
+
+    // Also handle Enter key in the add input
+    var input = document.getElementById('new-category-input');
+    if (input) {
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          var addBtn = document.querySelector('[data-action="add-category"]');
+          if (addBtn) addBtn.click();
+        }
+      });
     }
   }
 
@@ -464,7 +601,8 @@
           list: listName,
           dateAdded: Date.now(),
           notes: '',
-          rating: 0
+          rating: 0,
+          categories: []
         });
 
         if (result.success) {

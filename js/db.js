@@ -2,9 +2,15 @@ window.BookDB = (function () {
   'use strict';
 
   const DB_NAME = 'BookTrackerDB';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const STORE_NAME = 'books';
+  const SETTINGS_STORE = 'settings';
   let db = null;
+
+  var DEFAULT_CATEGORIES = [
+    'Autobiography', 'Biography', 'Science', 'Economics',
+    'Business: General', 'Fiction', 'History: General', 'Philosophy'
+  ];
 
   function init() {
     return new Promise(function (resolve, reject) {
@@ -17,10 +23,22 @@ window.BookDB = (function () {
           store.createIndex('list', 'list', { unique: false });
           store.createIndex('dateAdded', 'dateAdded', { unique: false });
         }
+        if (!database.objectStoreNames.contains(SETTINGS_STORE)) {
+          database.createObjectStore(SETTINGS_STORE, { keyPath: 'key' });
+        }
       };
 
-      request.onsuccess = function (event) {
+      request.onsuccess = async function (event) {
         db = event.target.result;
+        // Seed default categories if none exist
+        try {
+          var cats = await getCategories();
+          if (!cats || cats.length === 0) {
+            await saveCategories(DEFAULT_CATEGORIES);
+          }
+        } catch (e) {
+          console.warn('Category seed error:', e);
+        }
         resolve(db);
       };
 
@@ -256,6 +274,88 @@ window.BookDB = (function () {
     });
   }
 
+  // ---- Categories ----
+  function getCategories() {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(SETTINGS_STORE, 'readonly');
+      const store = tx.objectStore(SETTINGS_STORE);
+      const request = store.get('categories');
+      request.onsuccess = function () {
+        resolve(request.result ? request.result.value : []);
+      };
+      request.onerror = function () { reject(request.error); };
+    });
+  }
+
+  function saveCategories(categories) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction(SETTINGS_STORE, 'readwrite');
+      const store = tx.objectStore(SETTINGS_STORE);
+      store.put({ key: 'categories', value: categories });
+      tx.oncomplete = async function () {
+        // Sync to Firebase
+        if (window.BookFirebase && window.BookFirebase.getUser()) {
+          try {
+            await window.BookFirebase.saveSettings({ categories: categories });
+          } catch (e) {
+            console.warn('Firebase categories sync failed:', e);
+          }
+        }
+        resolve();
+      };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }
+
+  function updateBookCategories(id, categories) {
+    return new Promise(async function (resolve, reject) {
+      try {
+        const book = await getBook(id);
+        if (!book) {
+          resolve({ success: false, reason: 'not_found' });
+          return;
+        }
+        book.categories = categories;
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put(book);
+        tx.oncomplete = async function () {
+          await syncToFirebase(book);
+          resolve({ success: true });
+        };
+        tx.onerror = function () { reject(tx.error); };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  // Remove a category from all books that have it
+  function removeCategoryFromAllBooks(categoryName) {
+    return new Promise(async function (resolve, reject) {
+      try {
+        var allBooks = await getAllBooks();
+        var toUpdate = allBooks.filter(function (b) {
+          return b.categories && b.categories.indexOf(categoryName) !== -1;
+        });
+        for (var i = 0; i < toUpdate.length; i++) {
+          var book = toUpdate[i];
+          book.categories = book.categories.filter(function (c) { return c !== categoryName; });
+          var tx = db.transaction(STORE_NAME, 'readwrite');
+          tx.objectStore(STORE_NAME).put(book);
+          await new Promise(function (res, rej) {
+            tx.oncomplete = res;
+            tx.onerror = rej;
+          });
+          await syncToFirebase(book);
+        }
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   // Upload all local books to Firestore (used on first sign-in when cloud is empty)
   function uploadAllToFirebase() {
     return getAllBooks().then(function (books) {
@@ -280,6 +380,11 @@ window.BookDB = (function () {
     updateNotes: updateNotes,
     updateRating: updateRating,
     replaceAllBooks: replaceAllBooks,
-    uploadAllToFirebase: uploadAllToFirebase
+    uploadAllToFirebase: uploadAllToFirebase,
+    getCategories: getCategories,
+    saveCategories: saveCategories,
+    updateBookCategories: updateBookCategories,
+    removeCategoryFromAllBooks: removeCategoryFromAllBooks,
+    DEFAULT_CATEGORIES: DEFAULT_CATEGORIES
   };
 })();

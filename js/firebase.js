@@ -129,6 +129,26 @@ window.BookFirebase = (function () {
     });
   }
 
+  // ---- Settings (categories, etc.) ----
+  function settingsDoc() {
+    if (!currentUser) return null;
+    return db.collection('users').doc(currentUser.uid).collection('settings').doc('app');
+  }
+
+  function saveSettings(data) {
+    var doc = settingsDoc();
+    if (!doc) return Promise.resolve();
+    return doc.set(data, { merge: true });
+  }
+
+  function getSettings() {
+    var doc = settingsDoc();
+    if (!doc) return Promise.resolve(null);
+    return doc.get().then(function (snap) {
+      return snap.exists ? snap.data() : null;
+    });
+  }
+
   // Firestore doc IDs can't contain /
   function sanitizeId(id) {
     return id.replace(/\//g, '_');
@@ -143,6 +163,8 @@ window.BookFirebase = (function () {
     onSync: onSync,
     saveBook: saveBook,
     removeBook: removeBook,
-    getAllBooks: getAllBooks
+    getAllBooks: getAllBooks,
+    saveSettings: saveSettings,
+    getSettings: getSettings
   };
 })();
