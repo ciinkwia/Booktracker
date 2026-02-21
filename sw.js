@@ -1,4 +1,4 @@
-var CACHE_NAME = 'booktracker-v11';
+var CACHE_NAME = 'booktracker-v12';
 var COVERS_CACHE = 'booktracker-covers-v1';
 var MAX_COVERS = 200;
 
@@ -86,7 +86,28 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // Static assets: cache first, network fallback
+  // App code (HTML, CSS, JS): network first, cache fallback
+  // This ensures code updates are always picked up when online
+  if (url.pathname.endsWith('.html') || url.pathname.endsWith('.css') ||
+      url.pathname.endsWith('.js') || url.pathname === '/' ||
+      url.pathname.endsWith('/')) {
+    event.respondWith(
+      fetch(event.request).then(function (response) {
+        if (response.ok) {
+          var responseClone = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) {
+            cache.put(event.request, responseClone);
+          });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match(event.request);
+      })
+    );
+    return;
+  }
+
+  // Other static assets (icons, manifest, etc.): cache first, network fallback
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       return cached || fetch(event.request);
