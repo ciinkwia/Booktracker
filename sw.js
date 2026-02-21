@@ -1,4 +1,4 @@
-var CACHE_NAME = 'booktracker-v10';
+var CACHE_NAME = 'booktracker-v11';
 var COVERS_CACHE = 'booktracker-covers-v1';
 var MAX_COVERS = 200;
 

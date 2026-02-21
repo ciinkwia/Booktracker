@@ -183,10 +183,24 @@ window.BookUI = (function () {
       }
     });
 
+    // Sort books within a group: by author first, then title
+    function sortByAuthorTitle(a, b) {
+      var authorA = (a.authors || [''])[0].toLowerCase();
+      var authorB = (b.authors || [''])[0].toLowerCase();
+      if (authorA < authorB) return -1;
+      if (authorA > authorB) return 1;
+      var titleA = (a.title || '').toLowerCase();
+      var titleB = (b.title || '').toLowerCase();
+      if (titleA < titleB) return -1;
+      if (titleA > titleB) return 1;
+      return 0;
+    }
+
     var html = '';
     // Render in user-defined order
     categories.forEach(function (cat) {
       if (groups[cat] && groups[cat].length > 0) {
+        groups[cat].sort(sortByAuthorTitle);
         html += '<div class="category-group">' +
           '<div class="category-header">' + escapeHtml(cat) + '</div>' +
           groups[cat].map(renderBookCard).join('') +
@@ -195,6 +209,7 @@ window.BookUI = (function () {
     });
 
     if (uncategorized.length > 0) {
+      uncategorized.sort(sortByAuthorTitle);
       html += '<div class="category-group">' +
         '<div class="category-header">Uncategorized</div>' +
         uncategorized.map(renderBookCard).join('') +
