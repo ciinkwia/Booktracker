@@ -321,11 +321,11 @@
         return;
       }
 
-      // Check which results the user already has
+      // Check which results the user already has (by ID or title+author match)
       var owned = [];
       var notOwned = [];
       for (var i = 0; i < results.length; i++) {
-        var existing = await BookDB.bookExists(results[i].id);
+        var existing = await BookDB.bookExists(results[i].id, results[i].title, results[i].authors);
         if (existing.list) {
           owned.push({ result: results[i], list: existing.list });
         } else {

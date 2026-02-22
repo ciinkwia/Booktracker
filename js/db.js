@@ -86,7 +86,7 @@ window.BookDB = (function () {
     });
   }
 
-  function bookExists(id) {
+  function bookExists(id, title, authors) {
     return new Promise(function (resolve, reject) {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
@@ -95,6 +95,24 @@ window.BookDB = (function () {
       request.onsuccess = function () {
         if (request.result) {
           resolve({ exists: true, list: request.result.list });
+        } else if (title) {
+          // Fallback: match by title + first author (handles different IDs for same book)
+          var normalTitle = title.toLowerCase().trim();
+          var normalAuthor = (authors && authors[0] || '').toLowerCase().trim();
+          var allReq = store.getAll();
+          allReq.onsuccess = function () {
+            var books = allReq.result || [];
+            for (var i = 0; i < books.length; i++) {
+              var bTitle = (books[i].title || '').toLowerCase().trim();
+              var bAuthor = ((books[i].authors || [])[0] || '').toLowerCase().trim();
+              if (bTitle === normalTitle && bAuthor === normalAuthor) {
+                resolve({ exists: true, list: books[i].list });
+                return;
+              }
+            }
+            resolve({ exists: false, list: null });
+          };
+          allReq.onerror = function () { reject(allReq.error); };
         } else {
           resolve({ exists: false, list: null });
         }
