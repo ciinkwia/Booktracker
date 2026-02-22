@@ -1,6 +1,6 @@
 {
-  "name": "Book Tracker",
-  "short_name": "Books",
+  "name": "My Library",
+  "short_name": "My Library",
   "description": "Track books you want to read, have read, and own",
   "start_url": "./index.html",
   "display": "standalone",

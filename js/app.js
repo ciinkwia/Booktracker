@@ -321,10 +321,23 @@
         return;
       }
 
-      var htmlParts = [];
+      // Check which results the user already has
+      var owned = [];
+      var notOwned = [];
       for (var i = 0; i < results.length; i++) {
         var existing = await BookDB.bookExists(results[i].id);
-        htmlParts.push(BookUI.renderSearchResult(results[i], existing.list));
+        if (existing.list) {
+          owned.push({ result: results[i], list: existing.list });
+        } else {
+          notOwned.push({ result: results[i], list: null });
+        }
+      }
+
+      // Show owned books first, then the rest
+      var sorted = owned.concat(notOwned);
+      var htmlParts = [];
+      for (var j = 0; j < sorted.length; j++) {
+        htmlParts.push(BookUI.renderSearchResult(sorted[j].result, sorted[j].list));
       }
       // Always append the manual add form at the bottom of results
       htmlParts.push(BookUI.renderManualAddForm());
