@@ -373,6 +373,7 @@
       coverUrl: bookData.coverUrl,
       publishYear: bookData.publishYear,
       pageCount: bookData.pageCount,
+      description: bookData.description || null,
       list: listName,
       dateAdded: Date.now(),
       notes: '',
