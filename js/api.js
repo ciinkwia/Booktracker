@@ -69,8 +69,7 @@ window.BookAPI = (function () {
       isbn: isbn,
       coverUrl: coverUrl,
       publishYear: info.publishedDate ? parseInt(info.publishedDate.substring(0, 4), 10) || null : null,
-      pageCount: info.pageCount || null,
-      description: info.description || null
+      pageCount: info.pageCount || null
     };
   }
 
@@ -120,8 +119,7 @@ window.BookAPI = (function () {
       isbn: isbn,
       coverUrl: coverUrl,
       publishYear: doc.first_publish_year || null,
-      pageCount: doc.number_of_pages_median || null,
-      description: null
+      pageCount: doc.number_of_pages_median || null
     };
   }
 

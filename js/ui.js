@@ -298,14 +298,6 @@ window.BookUI = (function () {
       categoryHtml = renderCategoryPicker(book.id, book.categories || [], allCategories);
     }
 
-    var descriptionHtml = '';
-    if (book.description) {
-      descriptionHtml = '<div class="detail-section">' +
-        '<div class="detail-section-title">Description</div>' +
-        '<div class="detail-description">' + escapeHtml(book.description) + '</div>' +
-      '</div>';
-    }
-
     return '<div class="detail-header">' +
       renderCover(book.coverUrl, book.title, 'large') +
       '<div class="detail-info">' +
@@ -318,8 +310,6 @@ window.BookUI = (function () {
     ratingHtml +
 
     categoryHtml +
-
-    descriptionHtml +
 
     '<div class="detail-section">' +
       '<div class="detail-section-title">Notes</div>' +

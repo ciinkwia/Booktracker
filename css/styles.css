@@ -534,12 +534,6 @@ body {
   margin-bottom: 10px;
 }
 
-.detail-description {
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
 .detail-notes {
   width: 100%;
   min-height: 80px;
