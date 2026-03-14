@@ -1,0 +1,639 @@
+(async function () {
+  'use strict';
+
+  var currentList = 'wantToRead';
+  var searchDebounceTimer = null;
+  var DEBOUNCE_MS = 400;
+  var syncInProgress = false;
+  var initialSyncDone = false;
+
+  // ---- Init ----
+  async function init() {
+    await BookDB.init();
+    BookFirebase.init();
+    registerServiceWorker();
+    setupEventListeners();
+    setupFirebaseSync();
+    await refreshCurrentList();
+    await refreshCounts();
+  }
+
+  function registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(function (err) {
+        console.error('SW registration failed:', err);
+      });
+    }
+  }
+
+  // ---- Firebase Auth & Sync ----
+  function setupFirebaseSync() {
+    BookFirebase.onAuthChange(function (user) {
+      updateAuthUI(user);
+      if (user) {
+        handleSignedIn();
+      } else {
+        // Reset sync state on sign-out
+        syncInProgress = false;
+        initialSyncDone = false;
+      }
+    });
+
+    // Real-time sync: when Firestore data changes, update local DB and refresh UI
+    // This only handles ONGOING sync after initial merge is done
+    BookFirebase.onSync(async function (cloudBooks) {
+      // Don't process snapshots until initial sign-in merge is complete
+      // This prevents race conditions where an early snapshot overwrites local data
+      if (!initialSyncDone) return;
+
+      // Don't process if we're in the middle of our own writes
+      if (syncInProgress) return;
+
+      // Safety: never wipe local data with an empty cloud snapshot
+      // (could happen during network hiccups or Firestore eventual consistency)
+      if (cloudBooks.length === 0) {
+        var localBooks = await BookDB.getAllBooks();
+        if (localBooks.length > 0) {
+          console.warn('Ignoring empty cloud snapshot — local DB has', localBooks.length, 'books');
+          return;
+        }
+      }
+
+      await BookDB.replaceAllBooks(cloudBooks);
+      await refreshCurrentList();
+      await refreshCounts();
+    });
+  }
+
+  async function handleSignedIn() {
+    if (syncInProgress) return;
+    syncInProgress = true;
+    showSyncBar('Syncing...');
+
+    try {
+      // Sync categories from cloud
+      var cloudSettings = await BookFirebase.getSettings();
+      if (cloudSettings && cloudSettings.categories) {
+        await BookDB.saveCategories(cloudSettings.categories);
+      } else {
+        // Upload local categories to cloud
+        var localCats = await BookDB.getCategories();
+        if (localCats.length > 0) {
+          await BookFirebase.saveSettings({ categories: localCats });
+        }
+      }
+
+      var cloudBooks = await BookFirebase.getAllBooks();
+      var localBooks = await BookDB.getAllBooks();
+
+      if (cloudBooks.length === 0 && localBooks.length > 0) {
+        // First sign-in: upload all local books to cloud
+        var uploadErrors = 0;
+        for (var i = 0; i < localBooks.length; i++) {
+          try {
+            await BookFirebase.saveBook(localBooks[i]);
+          } catch (e) {
+            uploadErrors++;
+            console.error('Failed to upload book:', localBooks[i].title, e);
+          }
+        }
+        if (uploadErrors > 0) {
+          showSyncBar(uploadErrors + ' book(s) failed to upload');
+        } else {
+          showSyncBar('Uploaded ' + localBooks.length + ' book(s) to cloud');
+        }
+
+      } else if (cloudBooks.length > 0) {
+        // Cloud has data: merge
+        var cloudMap = {};
+        cloudBooks.forEach(function (b) { cloudMap[b.id] = b; });
+
+        // Find local books not in cloud and upload them
+        var localOnly = localBooks.filter(function (b) { return !cloudMap[b.id]; });
+        for (var j = 0; j < localOnly.length; j++) {
+          try {
+            await BookFirebase.saveBook(localOnly[j]);
+          } catch (e) {
+            console.error('Failed to upload local-only book:', localOnly[j].title, e);
+          }
+        }
+
+        // Merge: cloud books + local-only books
+        var merged = cloudBooks.concat(localOnly);
+        await BookDB.replaceAllBooks(merged);
+        await refreshCurrentList();
+        await refreshCounts();
+        showSyncBar('Synced ' + merged.length + ' book(s)');
+
+      } else {
+        // Both empty, nothing to do
+        showSyncBar('Synced');
+      }
+    } catch (err) {
+      console.error('Sync error:', err);
+      showSyncBar('Sync error — data saved locally');
+    } finally {
+      syncInProgress = false;
+      initialSyncDone = true;
+    }
+  }
+
+  function updateAuthUI(user) {
+    var avatar = document.getElementById('auth-avatar');
+    var icon = document.getElementById('auth-icon-signedout');
+
+    if (user) {
+      avatar.src = user.photoURL || '';
+      avatar.classList.remove('hidden');
+      icon.classList.add('hidden');
+    } else {
+      avatar.classList.add('hidden');
+      icon.classList.remove('hidden');
+    }
+  }
+
+  function showSyncBar(text) {
+    var bar = document.getElementById('sync-bar');
+    var textEl = document.getElementById('sync-text');
+    textEl.textContent = text;
+    bar.classList.remove('hidden');
+    clearTimeout(bar._hideTimer);
+    bar._hideTimer = setTimeout(function () {
+      bar.classList.add('hidden');
+    }, 3000);
+  }
+
+  // ---- Event Listeners ----
+  function setupEventListeners() {
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        switchTab(btn.dataset.list);
+      });
+    });
+
+    // Search open/close
+    document.getElementById('search-open-btn').addEventListener('click', openSearch);
+    document.getElementById('search-close-btn').addEventListener('click', closeSearch);
+
+    // Auth button
+    document.getElementById('auth-btn').addEventListener('click', async function () {
+      if (BookFirebase.getUser()) {
+        if (confirm('Sign out? Your data is saved in the cloud.')) {
+          await BookFirebase.signOut();
+          BookUI.showToast('Signed out');
+        }
+      } else {
+        try {
+          await BookFirebase.signIn();
+          BookUI.showToast('Signed in');
+        } catch (err) {
+          console.error('Sign-in error:', err);
+          if (err.code === 'auth/unauthorized-domain') {
+            BookUI.showToast('Domain not authorized in Firebase');
+          } else if (err.code !== 'auth/popup-closed-by-user' &&
+                     err.code !== 'auth/cancelled-popup-request') {
+            BookUI.showToast('Sign-in error: ' + (err.code || err.message));
+          }
+        }
+      }
+    });
+
+    // Search input
+    document.getElementById('search-input').addEventListener('input', function (e) {
+      clearTimeout(searchDebounceTimer);
+      var query = e.target.value;
+      var resultsEl = document.getElementById('search-results');
+      var statusEl = document.getElementById('search-status');
+
+      if (!query.trim()) {
+        resultsEl.innerHTML = '';
+        statusEl.textContent = '';
+        return;
+      }
+
+      statusEl.innerHTML = '<div class="spinner"></div>';
+      searchDebounceTimer = setTimeout(function () {
+        performSearch(query);
+      }, DEBOUNCE_MS);
+    });
+
+    // Handle Enter key in search (immediate search)
+    document.getElementById('search-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        clearTimeout(searchDebounceTimer);
+        var query = e.target.value;
+        if (query.trim()) {
+          document.getElementById('search-status').innerHTML = '<div class="spinner"></div>';
+          performSearch(query);
+        }
+      }
+    });
+
+    // Book list clicks (event delegation)
+    document.getElementById('list-container').addEventListener('click', handleListClick);
+
+    // Search result clicks (event delegation)
+    document.getElementById('search-results').addEventListener('click', handleSearchResultClick);
+
+    // Modal backdrop close
+    document.querySelector('.modal-backdrop').addEventListener('click', function () {
+      BookUI.hideDetail();
+    });
+
+    // Modal action clicks (event delegation)
+    document.getElementById('book-detail-body').addEventListener('click', handleDetailAction);
+
+    // Back button handling for search overlay
+    window.addEventListener('popstate', function () {
+      var overlay = document.getElementById('search-overlay');
+      if (!overlay.classList.contains('hidden')) {
+        closeSearch();
+      }
+    });
+  }
+
+  // ---- Tab Switching ----
+  async function switchTab(listName) {
+    currentList = listName;
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+      btn.classList.toggle('active', btn.dataset.list === listName);
+    });
+    await refreshCurrentList();
+  }
+
+  // ---- List Rendering ----
+  async function refreshCurrentList() {
+    var books = await BookDB.getBooksByList(currentList);
+    var container = document.getElementById('list-container');
+    var categories = null;
+    if (currentList === 'own') {
+      categories = await BookDB.getCategories();
+    }
+    BookUI.renderBookList(books, currentList, container, categories);
+
+    // Wire up empty state search button if present
+    var emptyBtn = document.getElementById('empty-search-btn');
+    if (emptyBtn) {
+      emptyBtn.addEventListener('click', openSearch);
+    }
+
+    // Wire up manage categories button if present (shown on own list)
+    var manageCatBtn = document.getElementById('manage-cat-btn');
+    if (manageCatBtn) {
+      manageCatBtn.addEventListener('click', openCategoryManager);
+    }
+  }
+
+  async function refreshCounts() {
+    var counts = await BookDB.getCounts();
+    BookUI.updateCounts(counts);
+  }
+
+  // ---- Search ----
+  function openSearch() {
+    BookUI.showSearch();
+    BookUI.clearSearchCache();
+    var input = document.getElementById('search-input');
+    input.value = '';
+    document.getElementById('search-results').innerHTML = '';
+    document.getElementById('search-status').textContent = '';
+    setTimeout(function () { input.focus(); }, 350);
+    history.pushState({ search: true }, '');
+  }
+
+  function closeSearch() {
+    BookUI.hideSearch();
+  }
+
+  async function performSearch(query) {
+    var statusEl = document.getElementById('search-status');
+    var resultsEl = document.getElementById('search-results');
+
+    try {
+      var results = await BookAPI.search(query);
+
+      if (results.length === 0) {
+        resultsEl.innerHTML = '<p class="no-results">No books found for "' +
+          query.replace(/</g, '&lt;') + '"</p>' + BookUI.renderManualAddForm();
+        wireManualAddForm();
+        statusEl.textContent = '';
+        return;
+      }
+
+      // Check which results the user already has (by ID or title+author match)
+      var owned = [];
+      var notOwned = [];
+      for (var i = 0; i < results.length; i++) {
+        var existing = await BookDB.bookExists(results[i].id, results[i].title, results[i].authors);
+        if (existing.list) {
+          owned.push({ result: results[i], list: existing.list });
+        } else {
+          notOwned.push({ result: results[i], list: null });
+        }
+      }
+
+      // Show owned books first, then the rest
+      var sorted = owned.concat(notOwned);
+      var htmlParts = [];
+      for (var j = 0; j < sorted.length; j++) {
+        htmlParts.push(BookUI.renderSearchResult(sorted[j].result, sorted[j].list));
+      }
+      // Always append the manual add form at the bottom of results
+      htmlParts.push(BookUI.renderManualAddForm());
+      resultsEl.innerHTML = htmlParts.join('');
+      wireManualAddForm();
+      statusEl.textContent = results.length + ' result' + (results.length !== 1 ? 's' : '');
+    } catch (err) {
+      console.error('Search error details:', err);
+      if (!navigator.onLine) {
+        statusEl.textContent = 'You are offline. Search requires an internet connection.';
+      } else {
+        statusEl.textContent = 'Search error. Please try again.';
+      }
+      resultsEl.innerHTML = '';
+    }
+  }
+
+  // ---- Search Result Clicks ----
+  async function handleSearchResultClick(event) {
+    var addBtn = event.target.closest('[data-action="add"]');
+    if (!addBtn) return;
+
+    var card = addBtn.closest('[data-book-id]');
+    var listName = addBtn.dataset.list;
+    var bookData = BookUI.getCachedResult(card.dataset.bookId);
+    if (!bookData) return;
+
+    var result = await BookDB.addBook({
+      id: bookData.id,
+      title: bookData.title,
+      authors: bookData.authors,
+      isbn: bookData.isbn,
+      coverUrl: bookData.coverUrl,
+      publishYear: bookData.publishYear,
+      pageCount: bookData.pageCount,
+      list: listName,
+      dateAdded: Date.now(),
+      notes: '',
+      rating: 0,
+      categories: []
+    });
+
+    if (result.success) {
+      BookUI.showToast('Added to ' + BookUI.LIST_NAMES[listName]);
+      var actionsEl = card.querySelector('.add-actions');
+      actionsEl.innerHTML = '<span class="on-list-badge">On: ' +
+        BookUI.LIST_NAMES[listName] + '</span>';
+      await refreshCounts();
+      if (listName === currentList) {
+        await refreshCurrentList();
+      }
+    } else if (result.reason === 'exists') {
+      BookUI.showToast('Already on ' + BookUI.LIST_NAMES[result.existingList]);
+    }
+  }
+
+  // ---- List Card Clicks ----
+  function handleListClick(event) {
+    var card = event.target.closest('[data-book-id]');
+    if (!card) return;
+    openDetail(card.dataset.bookId);
+  }
+
+  async function openDetail(bookId) {
+    var book = await BookDB.getBook(bookId);
+    if (!book) return;
+    var categories = await BookDB.getCategories();
+    BookUI.showDetail(book, categories);
+  }
+
+  // ---- Detail Modal Actions ----
+  async function handleDetailAction(event) {
+    // Handle star rating clicks first (stars don't have data-action)
+    var star = event.target.closest('.star');
+    if (star) {
+      var ratingContainer = star.closest('.detail-star-rating');
+      if (ratingContainer) {
+        var ratingBookId = ratingContainer.dataset.bookId;
+        var rating = parseInt(star.dataset.star, 10);
+        await BookDB.updateRating(ratingBookId, rating);
+        var updatedBook = await BookDB.getBook(ratingBookId);
+        var cats = await BookDB.getCategories();
+        if (updatedBook) BookUI.showDetail(updatedBook, cats);
+        await refreshCurrentList();
+        BookUI.showToast('Rated ' + rating + ' star' + (rating !== 1 ? 's' : ''));
+      }
+      return;
+    }
+
+    var btn = event.target.closest('[data-action]');
+    if (!btn) return;
+
+    var action = btn.dataset.action;
+    var bookId = btn.dataset.bookId;
+
+    if (action === 'toggle-category') {
+      var category = btn.dataset.category;
+      var book = await BookDB.getBook(bookId);
+      if (!book) return;
+      var current = book.categories || [];
+      var idx = current.indexOf(category);
+      if (idx !== -1) {
+        // Deselect
+        current.splice(idx, 1);
+      } else {
+        if (current.length >= 2) {
+          BookUI.showToast('Maximum 2 categories');
+          return;
+        }
+        current.push(category);
+      }
+      await BookDB.updateBookCategories(bookId, current);
+      var updated = await BookDB.getBook(bookId);
+      var allCats = await BookDB.getCategories();
+      if (updated) BookUI.showDetail(updated, allCats);
+      await refreshCurrentList();
+
+    } else if (action === 'move') {
+      var newList = btn.dataset.list;
+      await BookDB.moveBook(bookId, newList);
+      BookUI.showToast('Moved to ' + BookUI.LIST_NAMES[newList]);
+      BookUI.hideDetail();
+      await refreshCurrentList();
+      await refreshCounts();
+
+    } else if (action === 'remove') {
+      if (btn.dataset.confirmed !== 'true') {
+        btn.textContent = 'Tap again to confirm';
+        btn.dataset.confirmed = 'true';
+        btn.classList.add('confirm-state');
+        setTimeout(function () {
+          btn.textContent = 'Remove from Library';
+          btn.dataset.confirmed = 'false';
+          btn.classList.remove('confirm-state');
+        }, 3000);
+        return;
+      }
+      await BookDB.removeBook(bookId);
+      BookUI.showToast('Book removed');
+      BookUI.hideDetail();
+      await refreshCurrentList();
+      await refreshCounts();
+
+    } else if (action === 'save-notes') {
+      var textarea = document.getElementById('book-notes');
+      await BookDB.updateNotes(bookId, textarea.value);
+      BookUI.showToast('Notes saved');
+    }
+  }
+
+  // ---- Category Manager ----
+  async function openCategoryManager() {
+    var categories = await BookDB.getCategories();
+    var overlay = document.getElementById('cat-manager-overlay');
+    var body = document.getElementById('cat-manager-body');
+    body.innerHTML = BookUI.renderCategoryManager(categories);
+    overlay.classList.remove('hidden');
+    overlay.classList.add('visible');
+    wireCategoryManagerEvents();
+  }
+
+  function closeCategoryManager() {
+    var overlay = document.getElementById('cat-manager-overlay');
+    overlay.classList.remove('visible');
+    setTimeout(function () {
+      overlay.classList.add('hidden');
+    }, 300);
+  }
+
+  function wireCategoryManagerEvents() {
+    var body = document.getElementById('cat-manager-body');
+
+    body.onclick = async function (event) {
+      var btn = event.target.closest('[data-action]');
+      if (!btn) return;
+
+      var action = btn.dataset.action;
+
+      if (action === 'close-cat-manager') {
+        closeCategoryManager();
+        await refreshCurrentList();
+
+      } else if (action === 'add-category') {
+        var input = document.getElementById('new-category-input');
+        var name = input.value.trim();
+        if (!name) return;
+        var cats = await BookDB.getCategories();
+        if (cats.indexOf(name) !== -1) {
+          BookUI.showToast('Category already exists');
+          return;
+        }
+        cats.push(name);
+        await BookDB.saveCategories(cats);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+        BookUI.showToast('Added "' + name + '"');
+
+      } else if (action === 'delete-category') {
+        var catName = btn.dataset.category;
+        if (!confirm('Delete "' + catName + '"? It will be removed from all books.')) return;
+        var cats = await BookDB.getCategories();
+        cats = cats.filter(function (c) { return c !== catName; });
+        await BookDB.saveCategories(cats);
+        await BookDB.removeCategoryFromAllBooks(catName);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+        BookUI.showToast('Deleted "' + catName + '"');
+
+      } else if (action === 'move-cat-up') {
+        var idx = parseInt(btn.dataset.index, 10);
+        if (idx <= 0) return;
+        var cats = await BookDB.getCategories();
+        var temp = cats[idx - 1];
+        cats[idx - 1] = cats[idx];
+        cats[idx] = temp;
+        await BookDB.saveCategories(cats);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+
+      } else if (action === 'move-cat-down') {
+        var idx = parseInt(btn.dataset.index, 10);
+        var cats = await BookDB.getCategories();
+        if (idx >= cats.length - 1) return;
+        var temp = cats[idx + 1];
+        cats[idx + 1] = cats[idx];
+        cats[idx] = temp;
+        await BookDB.saveCategories(cats);
+        body.innerHTML = BookUI.renderCategoryManager(cats);
+      }
+    };
+
+    // Also handle Enter key in the add input
+    var input = document.getElementById('new-category-input');
+    if (input) {
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          var addBtn = document.querySelector('[data-action="add-category"]');
+          if (addBtn) addBtn.click();
+        }
+      });
+    }
+  }
+
+  // ---- Manual Add ----
+  function wireManualAddForm() {
+    var titleInput = document.getElementById('manual-title');
+    var authorInput = document.getElementById('manual-author');
+    if (!titleInput || !authorInput) return;
+
+    var buttons = document.querySelectorAll('[data-action="manual-add"]');
+
+    function updateButtons() {
+      var enabled = titleInput.value.trim() !== '' && authorInput.value.trim() !== '';
+      buttons.forEach(function (btn) { btn.disabled = !enabled; });
+    }
+
+    titleInput.addEventListener('input', updateButtons);
+    authorInput.addEventListener('input', updateButtons);
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        var title = titleInput.value.trim();
+        var author = authorInput.value.trim();
+        if (!title || !author) return;
+
+        var listName = btn.dataset.list;
+        var bookId = 'manual:' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+        var result = await BookDB.addBook({
+          id: bookId,
+          title: title,
+          authors: [author],
+          isbn: null,
+          coverUrl: null,
+          publishYear: null,
+          pageCount: null,
+          list: listName,
+          dateAdded: Date.now(),
+          notes: '',
+          rating: 0,
+          categories: []
+        });
+
+        if (result.success) {
+          BookUI.showToast('Added "' + title + '" to ' + BookUI.LIST_NAMES[listName]);
+          titleInput.value = '';
+          authorInput.value = '';
+          updateButtons();
+          await refreshCounts();
+          if (listName === currentList) {
+            await refreshCurrentList();
+          }
+        }
+      });
+    });
+  }
+
+  // ---- Start ----
+  init().catch(function (err) {
+    console.error('Init failed:', err);
+  });
+})();
