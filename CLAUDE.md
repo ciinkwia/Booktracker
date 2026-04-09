@@ -1,6 +1,8 @@
-# Booktracker ("My Library")
+# My Library
 
-> **⚠️ INSTRUCTION TO CLAUDE:** This file is the source of truth for the project. **Any time we make a meaningful change to Booktracker — new feature, architectural decision, deploy gotcha, dependency change, file restructure, schema change, or hard-won bug fix — you must update this CLAUDE.md before considering the task done.** Treat it as part of the deliverable. Bump the "Last updated" date at the bottom every time you edit it. If you're unsure whether something is worth recording, record it.
+> **⚠️ INSTRUCTION TO CLAUDE:** This file is the source of truth for the project. **Any time we make a meaningful change to My Library — new feature, architectural decision, deploy gotcha, dependency change, file restructure, schema change, or hard-won bug fix — you must update this CLAUDE.md before considering the task done.** Treat it as part of the deliverable. Bump the "Last updated" date at the bottom every time you edit it. If you're unsure whether something is worth recording, record it.
+
+> **Note on naming:** The user-facing app name is **My Library**. The GitHub repo is still `BookTracker`, the local folder is still `BookTracker/`, the IndexedDB is still `BookTrackerDB`, and the Firebase project is still `booktracker-574a6` — these are *identifiers tied to live data* and renaming them would orphan users' books. Do not rename them.
 
 ---
 
@@ -40,7 +42,7 @@ Browser (PWA, mobile-first)
 
 - `index.html` — single-page app shell. Loads Firebase compat SDKs from CDN, then `js/db.js` → `js/firebase.js` → `js/api.js` → `js/ui.js` → `js/app.js`.
 - `manifest.json` — PWA manifest. Theme color `#6C63FF`, dark bg `#121212`.
-- `sw.js` — service worker. Cache name is **`booktracker-v17`** — bump this version any time you ship code changes so clients pick them up.
+- `sw.js` — service worker. Cache name is **`mylibrary-v18`** — bump this version any time you ship code changes so clients pick them up.
 - `server.js` — trivial 60-line static file server on port 8080 for local dev (`node server.js`). Not used in production.
 - `js/db.js` — `window.BookDB`. IndexedDB wrapper. CRUD on books + categories. Every write also calls `syncToFirebase()` if signed in. Includes `bookExists` fuzzy match (id, then title+first-author fallback) to avoid duplicates with different ids.
 - `js/firebase.js` — `window.BookFirebase`. Firebase init, auth (Google popup→redirect fallback), `onSnapshot` listener for real-time cloud→local sync, `saveBook`/`removeBook`/`saveSettings`. Firestore doc id sanitizer replaces `/` with `_`.
@@ -130,7 +132,7 @@ There is no production deploy in this repo right now — it's run via `node serv
 ## Gotchas / things to know
 
 ### 1. Bump `CACHE_NAME` in sw.js when shipping JS/CSS/HTML changes
-Currently `booktracker-v17`. If you don't bump it, the old service worker may serve stale files even though the fetch strategy is network-first (because `cache.put` only updates a successful response — but the activate phase does cache cleanup keyed on the version).
+Currently `mylibrary-v18`. If you don't bump it, the old service worker may serve stale files even though the fetch strategy is network-first (because `cache.put` only updates a successful response — but the activate phase does cache cleanup keyed on the version).
 
 ### 2. Firestore doc IDs can't contain `/`
 Book ids like `ol:/works/OL12345W` would break. `BookFirebase.sanitizeId` replaces `/` with `_` before reading/writing Firestore. Don't bypass this.
@@ -163,4 +165,4 @@ Same book from Google Books vs Open Library has different ids. `db.js > bookExis
 
 ---
 
-**Last updated:** 2026-04-08 (initial creation)
+**Last updated:** 2026-04-08 (renamed from "Booktracker" to "My Library"; bumped sw.js cache to mylibrary-v18)

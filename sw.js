@@ -1,5 +1,5 @@
-var CACHE_NAME = 'booktracker-v17';
-var COVERS_CACHE = 'booktracker-covers-v1';
+var CACHE_NAME = 'mylibrary-v18';
+var COVERS_CACHE = 'mylibrary-covers-v1';
 var MAX_COVERS = 200;
 
 var STATIC_ASSETS = [
