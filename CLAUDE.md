@@ -136,13 +136,13 @@ In `js/app.js`, two flags guard sync:
 
 **Live:** GitHub Pages at https://ciinkwia.github.io/Booktracker/ — serves the **`main`** branch, root path, legacy build (no Actions). This is the installed PWA on ciinkwia's phone.
 
-**Branch gotcha:** local work happens on **`master`**, which has an *unrelated* history from `main` (master was re-initialized 2026-03). As of 2026-09-09 the two are identical in code except master carries `CLAUDE.md` and everything after. To deploy:
+**Branches:** one branch, `main`, local and remote. (Until 2026-09-09 local work sat on an unrelated `master`; it was force-pushed over `main` and deleted that day.) To deploy:
 
 ```bash
-git push origin master:main --force
+git push
 ```
 
-Only do that when ciinkwia says "deploy" (his standing rule). Bump `CACHE_NAME` in `sw.js` first.
+Only when ciinkwia says "deploy" (his standing rule). Bump `CACHE_NAME` in `sw.js` first. Pages picks it up within a minute or two; the phone gets the new code on its next open after the service worker updates.
 
 **Local dev:** `node server.js` → http://localhost:8080. The root `AI Projects/.claude/launch.json` has a `my-library` entry for the in-app browser preview.
 
@@ -187,4 +187,4 @@ Keyless quota is per IP. Never make Google the only source again — the paralle
 
 ---
 
-**Last updated:** 2026-09-09 (search engine rewrite: parallel Google+Open Library, junk filter, edition dedupe, ranking; visual refresh; sw cache v19 + fonts cache; documented the GitHub Pages `main`-vs-`master` deploy)
+**Last updated:** 2026-09-09 (search engine rewrite: parallel Google+Open Library, junk filter, edition dedupe, ranking; visual refresh; sw cache v19 + fonts cache; deployed to GitHub Pages; branches unified on `main`)
