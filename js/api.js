@@ -1,49 +1,339 @@
 window.BookAPI = (function () {
   'use strict';
 
+  // ---------------------------------------------------------------
+  // Search engine
+  //
+  // Both sources are queried IN PARALLEL, then the results are pooled,
+  // junk (summaries / workbooks / box sets) is dropped, editions of the
+  // same book are collapsed into one card, and the survivors are ranked
+  // by how well they match what was typed + how well-known they are.
+  //
+  //   Google Books  — best coverage of brand-new titles, best covers,
+  //                   but keyless calls share a per-IP daily quota and
+  //                   can 429 at any time, and it returns every edition.
+  //   Open Library  — community catalog, great popularity signals
+  //                   (readinglog_count), weaker on very new books.
+  //
+  // If one source fails the other still answers. Only when BOTH fail
+  // does search() reject.
+  // ---------------------------------------------------------------
+
   var GOOGLE_BOOKS_URL = 'https://www.googleapis.com/books/v1/volumes';
   var OPEN_LIBRARY_URL = 'https://openlibrary.org/search.json';
-  var RESULTS_LIMIT = 20;
+
+  // Optional. Keyless Google Books calls share a small per-IP quota.
+  // To raise it: enable "Books API" on the booktracker-574a6 Firebase
+  // project in Google Cloud console, then paste the Firebase web API key
+  // (from js/firebase.js) here. Until the API is enabled, a key returns
+  // 403, so leave this empty.
+  var GOOGLE_BOOKS_KEY = '';
+
+  var GOOGLE_LIMIT = 40;      // max Google allows per call
+  var OL_LIMIT = 30;
+  var RESULTS_LIMIT = 20;     // what we show
+  var FETCH_TIMEOUT_MS = 9000;
+
+  // ---- ISBN ----
+  function cleanISBN(query) {
+    return query.replace(/[-\s]/g, '');
+  }
 
   function isISBN(query) {
-    var cleaned = query.replace(/[-\s]/g, '');
-    return /^\d{10}(\d{3})?$/.test(cleaned);
+    return /^\d{9}[\dXx]$|^\d{13}$/.test(cleanISBN(query));
   }
 
-  // Main search: try Google Books first, fall back to Open Library
-  function search(query) {
-    if (!query.trim()) return Promise.resolve([]);
-
-    return searchGoogle(query).catch(function (err) {
-      console.warn('Google Books failed, trying Open Library:', err.message);
-      return searchOpenLibrary(query);
-    });
-  }
-
-  // ---- Google Books ----
-  function searchGoogle(query) {
-    var q;
-    if (isISBN(query)) {
-      q = 'isbn:' + query.replace(/[-\s]/g, '');
-    } else {
-      q = query;
+  // ---- Fetch with timeout ----
+  function fetchJson(url) {
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = null;
+    if (controller) {
+      timer = setTimeout(function () { controller.abort(); }, FETCH_TIMEOUT_MS);
     }
-
-    var url = GOOGLE_BOOKS_URL + '?q=' + encodeURIComponent(q) +
-      '&maxResults=' + RESULTS_LIMIT + '&printType=books';
-
-    return fetch(url)
+    return fetch(url, controller ? { signal: controller.signal } : undefined)
       .then(function (response) {
-        if (!response.ok) throw new Error('Google Books: ' + response.status);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         return response.json();
       })
       .then(function (data) {
-        if (!data.items) return [];
-        return data.items.map(normalizeGoogle);
+        if (timer) clearTimeout(timer);
+        return data;
+      }, function (err) {
+        if (timer) clearTimeout(timer);
+        throw err;
       });
   }
 
-  function normalizeGoogle(item) {
+  function settle(promise) {
+    return promise.then(
+      function (value) { return { ok: true, value: value }; },
+      function (err) { return { ok: false, error: err }; }
+    );
+  }
+
+  // ---- Text normalization ----
+  function fold(str) {
+    var s = String(str || '').toLowerCase();
+    if (s.normalize) s = s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    s = s.replace(/&/g, ' and ')
+         .replace(/['’]/g, '')
+         .replace(/[^a-z0-9]+/g, ' ')
+         .trim();
+    return s;
+  }
+
+  var EDITION_NOISE = /\b(\d+(st|nd|rd|th)|anniversary|edition|ed|unabridged|abridged|illustrated|annotated|revised|updated|expanded|deluxe|collectors|hardcover|paperback|large print|mass market|kindle|ebook|audiobook|international|export|reprint|movie tie in|tie in|special|complete|definitive|new)\b/g;
+
+  // Key used to decide "these two results are the same book".
+  // Lowercase, no accents/punctuation, subtitle and bracketed text dropped,
+  // leading article dropped, edition words dropped.
+  function titleKey(title) {
+    var t = String(title || '');
+    t = t.replace(/\s*[\(\[][^\)\]]*[\)\]]/g, ' ');          // (Large Print) [Illustrated]
+    var cut = t.search(/\s*[:–—]\s|\s-\s/);           // subtitle after ":" or dash
+    if (cut > 2) t = t.substring(0, cut);
+    t = fold(t);
+    t = t.replace(/^(a|an|the)\s+/, '');
+    t = t.replace(EDITION_NOISE, ' ').replace(/\s+/g, ' ').trim();
+    return t;
+  }
+
+  // Last name of the first author, folded.
+  function authorKey(authors) {
+    var first = (authors && authors[0]) || '';
+    if (/unknown author/i.test(first)) return '';
+    var parts = fold(first).split(' ').filter(function (p) {
+      return p.length > 1 && !/^(jr|sr|phd|md|dr|ii|iii|iv)$/.test(p);
+    });
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+
+  function matchKey(title, authors) {
+    return titleKey(title) + '|' + authorKey(authors);
+  }
+
+  // ---- Junk detection ----
+  var JUNK_TITLE = /\b(summary|summaries|summarized|synopsis|study guide|workbook|work book|analysis of|key (takeaways|insights|ideas)|conversation starters|cliffs?notes|sparknotes|book club kit|in \d+ minutes|quicklet|instaread|blinkist|companion (guide|workbook|book)|trivia|quiz(zes)?|box(ed)? set|bundle|\d+[- ]books? (set|series|collection|bundle|box)|books? \d+[- ]\d+|collection \d+ books?|\d+[- ]copy|counter display|display pack|resumen (de|del)|^r[eé]sum[eé]|teachers? guide|lesson plans?|readers? guide|discussion (guide|prompts|questions)|sidekick|coloring book|journal for|notebook for|cheat sheet|literature notes|a guide to reading|the essential (points|guide)|by [a-z ]+ \| ?(summary|analysis))\b/i;
+
+  var JUNK_AUTHOR = /(shortcut edition|irb media|meilleurs resum|resum[eé]s? |summar|instaread|summareads|readtrepreneur|bookrags|milkyway media|speedy reads|worth books|blinkist|quickread|getabstract|sparknotes|cliffsnotes|hourly history|whizbooks|fastreads|book tigers|ant hive|elite summaries|smart reads|paul adams|summary station|instant[- ]?summ|knowledge lovers|dennis braun|abbey beathan|blackwell|bookzilla|savant|epicread|rapid reads|1 hour summar|book addict|chapter|bookhabits|bookflix|swift reads|speed reads|scholarly reads|brief reads|clever reads|quick reads|the book tigers|book\s*summar)/i;
+
+  function isJunk(candidate, query) {
+    var title = candidate.title + ' ' + (candidate.subtitle || '');
+    var authors = (candidate.authors || []).join(' ');
+    if (JUNK_AUTHOR.test(authors)) return true;
+    if (JUNK_TITLE.test(title)) {
+      // Only drop if the user didn't actually ask for it (e.g. "workbook")
+      return !JUNK_TITLE.test(query);
+    }
+    return false;
+  }
+
+  // ---- Public search ----
+  function search(query) {
+    var q = String(query || '').trim();
+    if (!q) return Promise.resolve({ items: [], stats: emptyStats() });
+
+    var isbn = isISBN(q);
+    var tasks = [
+      settle(searchGoogle(q, isbn)),
+      settle(searchOpenLibrary(q, isbn))
+    ];
+
+    return Promise.all(tasks).then(function (outcomes) {
+      var candidates = [];
+      var failed = [];
+      outcomes.forEach(function (o, i) {
+        var name = i === 0 ? 'google' : 'openlibrary';
+        if (o.ok) {
+          candidates = candidates.concat(o.value);
+        } else {
+          failed.push(name);
+          console.warn('Book source failed (' + name + '):', o.error && o.error.message);
+        }
+      });
+
+      if (failed.length === tasks.length) {
+        throw new Error('All book sources failed');
+      }
+
+      var out = rankAndDedupe(candidates, q, isbn);
+      out.stats.failedSources = failed;
+      return out;
+    });
+  }
+
+  function emptyStats() {
+    return { raw: 0, junk: 0, duplicates: 0, shown: 0, failedSources: [] };
+  }
+
+  // ---- Ranking + dedupe ----
+  var STOPWORDS = /^(the|a|an|of|and|or|in|on|to|for|at|by|de|la|le|el|du|les|del|von|der|das|die|un|una|y|e|is|it|its|with|from|how|why|what)$/;
+
+  function tokens(str) {
+    var all = fold(str).split(' ').filter(function (t) { return t.length > 0; });
+    var meaningful = all.filter(function (t) { return !STOPWORDS.test(t); });
+    return meaningful.length ? meaningful : all;
+  }
+
+  function relevance(c, q) {
+    var qf = fold(q);
+    var tf = fold(c.title);
+    var tfull = fold(c.title + ' ' + (c.subtitle || ''));
+    var af = fold((c.authors || []).join(' '));
+    var qt = tokens(q);
+    var hay = tfull + ' ' + af;
+
+    var score = 0;
+
+    // Query-to-title match
+    if (titleKey(c.title) === titleKey(q)) score += 4;
+    else if (tf.indexOf(qf) === 0) score += 2.5;
+    else if (tfull.indexOf(qf) !== -1) score += 2;
+    else if (af.indexOf(qf) !== -1) score += 2;   // typed an author name
+
+    // Token coverage: what fraction of the words typed show up in title/author
+    if (qt.length) {
+      var hit = 0;
+      for (var i = 0; i < qt.length; i++) {
+        if (hay.indexOf(qt[i]) !== -1) hit++;
+      }
+      var coverage = hit / qt.length;
+      score += coverage * 3;
+      if (coverage === 1) score += 1;
+      else if (coverage < 0.5) score -= 4;
+    }
+
+    // Source's own ordering still counts for something
+    score += 1.5 / (1 + c.rank);
+
+    // Popularity (log-scaled, capped)
+    score += Math.min(3, Math.log10(1 + c.popularity) * 0.8);
+
+    // Data quality
+    if (c.coverUrl) score += 0.5;
+    if (c.isbn) score += 0.2;
+    if (c.language === 'en') score += 0.4;
+    else if (c.language && c.language !== 'unknown') score -= 1.5;
+
+    return score;
+  }
+
+  // Which edition inside a group becomes the card
+  function editionQuality(c) {
+    var s = 0;
+    if (c.coverUrl) s += 3;
+    if (c.language === 'en') s += 2;
+    if (c.isbn && c.isbn.length === 13) s += 1;
+    if (c.pageCount) s += 1;
+    if (c.source === 'google') s += 0.5;   // Google covers are usually sharper
+    if (c.subtitle) s += 0.2;
+    return s;
+  }
+
+  function rankAndDedupe(candidates, query, isbnQuery) {
+    var stats = emptyStats();
+    stats.raw = candidates.length;
+
+    // 1. Drop junk (never for ISBN lookups — the user asked for that exact book)
+    var kept = [];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!isbnQuery && isJunk(candidates[i], query)) {
+        stats.junk++;
+      } else {
+        kept.push(candidates[i]);
+      }
+    }
+
+    // 2. Score each candidate
+    kept.forEach(function (c) { c.score = relevance(c, query); });
+
+    // 3. Group editions of the same book (by match key, and by ISBN)
+    var groups = [];
+    var byKey = {};
+    var byIsbn = {};
+    kept.forEach(function (c) {
+      var key = matchKey(c.title, c.authors);
+      var g = byKey[key] || (c.isbn && byIsbn[c.isbn]) || null;
+      if (!g) {
+        g = { members: [] };
+        groups.push(g);
+      }
+      g.members.push(c);
+      byKey[key] = g;
+      if (c.isbn) byIsbn[c.isbn] = g;
+    });
+
+    // 4. Collapse each group into its best edition, filling gaps from siblings
+    var results = groups.map(function (g) {
+      var members = g.members.slice().sort(function (a, b) {
+        return editionQuality(b) - editionQuality(a);
+      });
+      var best = members[0];
+      var maxScore = -Infinity;
+      for (var j = 0; j < members.length; j++) {
+        if (members[j].score > maxScore) maxScore = members[j].score;
+        if (!best.coverUrl && members[j].coverUrl) best.coverUrl = members[j].coverUrl;
+        if (!best.isbn && members[j].isbn) best.isbn = members[j].isbn;
+        if (!best.pageCount && members[j].pageCount) best.pageCount = members[j].pageCount;
+        if (!best.publishYear && members[j].publishYear) best.publishYear = members[j].publishYear;
+      }
+      // Original publication year is nicer than "this edition's" year
+      var years = members.map(function (m) { return m.publishYear; }).filter(Boolean);
+      if (years.length) best.publishYear = Math.min.apply(null, years);
+
+      // Well-known books show up as many editions across both sources
+      best.score = maxScore + Math.min(1.2, Math.log10(members.length) * 0.8);
+      best.editions = members.length;
+      stats.duplicates += members.length - 1;
+      return best;
+    });
+
+    // 5. Sort, cut off the long tail of weak matches, trim
+    results.sort(function (a, b) { return b.score - a.score; });
+    if (results.length && !isbnQuery) {
+      var top = results[0].score;
+      var floor = Math.max(2, top * 0.45);
+      results = results.filter(function (r, idx) { return idx < 3 || r.score >= floor; });
+    }
+    results = results.slice(0, RESULTS_LIMIT);
+    stats.shown = results.length;
+
+    return {
+      items: results.map(publicShape),
+      stats: stats
+    };
+  }
+
+  function publicShape(c) {
+    return {
+      id: c.id,
+      title: c.title,
+      authors: c.authors,
+      isbn: c.isbn,
+      coverUrl: c.coverUrl,
+      publishYear: c.publishYear,
+      pageCount: c.pageCount,
+      score: c.score
+    };
+  }
+
+  // ---- Google Books ----
+  function searchGoogle(query, isbnQuery) {
+    var q = isbnQuery ? 'isbn:' + cleanISBN(query) : query;
+    var url = GOOGLE_BOOKS_URL +
+      '?q=' + encodeURIComponent(q) +
+      '&maxResults=' + GOOGLE_LIMIT +
+      '&printType=books' +
+      '&fields=' + encodeURIComponent('items(id,volumeInfo(title,subtitle,authors,publishedDate,industryIdentifiers,imageLinks,pageCount,language,ratingsCount,averageRating))') +
+      (GOOGLE_BOOKS_KEY ? '&key=' + GOOGLE_BOOKS_KEY : '');
+
+    return fetchJson(url).then(function (data) {
+      if (!data.items) return [];
+      return data.items.map(normalizeGoogle);
+    });
+  }
+
+  function normalizeGoogle(item, index) {
     var info = item.volumeInfo || {};
     var isbn = null;
 
@@ -59,72 +349,97 @@ window.BookAPI = (function () {
     if (info.imageLinks) {
       coverUrl = (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || '')
         .replace('http://', 'https://')
-        .replace('&edge=curl', '');
+        .replace('&edge=curl', '') || null;
     }
 
     return {
+      source: 'google',
+      rank: index,
       id: 'gbooks:' + item.id,
       title: info.title || 'Unknown Title',
+      subtitle: info.subtitle || '',
       authors: info.authors || ['Unknown Author'],
       isbn: isbn,
       coverUrl: coverUrl,
       publishYear: info.publishedDate ? parseInt(info.publishedDate.substring(0, 4), 10) || null : null,
-      pageCount: info.pageCount || null
+      pageCount: info.pageCount || null,
+      language: info.language || 'unknown',
+      popularity: (info.ratingsCount || 0) * 5
     };
   }
 
-  // ---- Open Library (fallback) ----
-  function searchOpenLibrary(query) {
-    var params;
-    if (isISBN(query)) {
-      params = 'isbn=' + encodeURIComponent(query.replace(/[-\s]/g, ''));
-    } else {
-      params = 'q=' + encodeURIComponent(query);
-    }
+  // ---- Open Library ----
+  function searchOpenLibrary(query, isbnQuery) {
+    var params = isbnQuery
+      ? 'isbn=' + encodeURIComponent(cleanISBN(query))
+      : 'q=' + encodeURIComponent(query);
 
+    // lang=en + the editions sub-document makes Open Library hand us the
+    // English edition's title/cover (work titles are often in the original
+    // language, e.g. "Siete breves lecciones de física").
     var url = OPEN_LIBRARY_URL + '?' + params +
-      '&fields=key,title,author_name,first_publish_year,isbn,cover_i,number_of_pages_median' +
-      '&limit=' + RESULTS_LIMIT;
+      '&lang=en' +
+      '&fields=' + encodeURIComponent('key,title,subtitle,author_name,first_publish_year,isbn,cover_i,number_of_pages_median,edition_count,ratings_count,readinglog_count,want_to_read_count,language,editions,editions.title,editions.subtitle,editions.language,editions.cover_i,editions.isbn,editions.number_of_pages') +
+      '&limit=' + OL_LIMIT;
 
-    return fetch(url)
-      .then(function (response) {
-        if (!response.ok) throw new Error('Open Library: ' + response.status);
-        return response.json();
-      })
-      .then(function (data) {
-        if (!data.docs) return [];
-        return data.docs.map(normalizeOpenLibrary);
-      });
+    return fetchJson(url).then(function (data) {
+      if (!data.docs) return [];
+      return data.docs.map(normalizeOpenLibrary);
+    });
   }
 
-  function normalizeOpenLibrary(doc) {
-    var coverUrl = null;
-    if (doc.cover_i) {
-      coverUrl = 'https://covers.openlibrary.org/b/id/' + doc.cover_i + '-M.jpg';
+  function pickIsbn(list) {
+    if (!list || !list.length) return null;
+    for (var i = 0; i < list.length; i++) {
+      if (/^97[89]\d{10}$/.test(list[i])) return list[i];
+    }
+    return list[0];
+  }
+
+  function normalizeOpenLibrary(doc, index) {
+    // Preferred English edition (only present when lang=en matched one)
+    var ed = (doc.editions && doc.editions.docs && doc.editions.docs[0]) || null;
+
+    var coverId = (ed && ed.cover_i) || doc.cover_i || null;
+    var coverUrl = coverId
+      ? 'https://covers.openlibrary.org/b/id/' + coverId + '-M.jpg'
+      : null;
+
+    var isbn = (ed && pickIsbn(ed.isbn)) || pickIsbn(doc.isbn);
+
+    var lang = 'unknown';
+    if (ed && ed.language && ed.language.length) {
+      lang = ed.language.indexOf('eng') !== -1 ? 'en' : ed.language[0];
+    } else if (doc.language && doc.language.length) {
+      lang = doc.language.indexOf('eng') !== -1 ? 'en' : doc.language[0];
     }
 
-    var isbn = null;
-    if (doc.isbn && doc.isbn.length > 0) {
-      // Prefer 13-digit ISBN
-      for (var i = 0; i < doc.isbn.length; i++) {
-        if (doc.isbn[i].length === 13) { isbn = doc.isbn[i]; break; }
-      }
-      if (!isbn) isbn = doc.isbn[0];
-    }
+    var pop = (doc.readinglog_count || 0) +
+              (doc.want_to_read_count || 0) +
+              (doc.ratings_count || 0) * 3 +
+              (doc.edition_count || 0) * 2;
 
     return {
+      source: 'openlibrary',
+      rank: index,
       id: 'ol:' + (doc.key || '').replace('/works/', ''),
-      title: doc.title || 'Unknown Title',
+      title: (ed && ed.title) || doc.title || 'Unknown Title',
+      subtitle: (ed && ed.subtitle) || doc.subtitle || '',
       authors: doc.author_name || ['Unknown Author'],
       isbn: isbn,
       coverUrl: coverUrl,
       publishYear: doc.first_publish_year || null,
-      pageCount: doc.number_of_pages_median || null
+      pageCount: (ed && ed.number_of_pages) || doc.number_of_pages_median || null,
+      language: lang,
+      popularity: pop
     };
   }
 
   return {
     search: search,
-    isISBN: isISBN
+    isISBN: isISBN,
+    matchKey: matchKey,
+    titleKey: titleKey,
+    authorKey: authorKey
   };
 })();

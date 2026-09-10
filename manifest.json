@@ -4,8 +4,8 @@
   "description": "Track books you want to read, have read, and own",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#121212",
-  "theme_color": "#6C63FF",
+  "background_color": "#0D0D16",
+  "theme_color": "#0D0D16",
   "orientation": "portrait",
   "icons": [
     {

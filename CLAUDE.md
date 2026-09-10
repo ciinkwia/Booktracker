@@ -29,9 +29,9 @@ Browser (PWA, mobile-first)
    │     ├── Auth (Google popup, falls back to redirect)
    │     └── Firestore: users/{uid}/books/{docId} + users/{uid}/settings/app
    │
-   └── External APIs (called from browser)
-         ├── Google Books — primary search
-         └── Open Library — fallback search
+   └── External APIs (called from browser, IN PARALLEL)
+         ├── Google Books — best for brand-new titles + covers; keyless = per-IP quota, can 429
+         └── Open Library — community catalog, popularity signals, English-edition titles
 ```
 
 **Local-first design:** all reads/writes hit IndexedDB; Firebase sync is best-effort and bidirectional.
@@ -42,14 +42,14 @@ Browser (PWA, mobile-first)
 
 - `index.html` — single-page app shell. Loads Firebase compat SDKs from CDN, then `js/db.js` → `js/firebase.js` → `js/api.js` → `js/ui.js` → `js/app.js`.
 - `manifest.json` — PWA manifest. Theme color `#6C63FF`, dark bg `#121212`.
-- `sw.js` — service worker. Cache name is **`mylibrary-v18`** — bump this version any time you ship code changes so clients pick them up.
+- `sw.js` — service worker. Cache name is **`mylibrary-v19`** — bump this version any time you ship code changes so clients pick them up. Also owns a `mylibrary-fonts-v1` cache (Google Fonts, cache-first).
 - `server.js` — trivial 60-line static file server on port 8080 for local dev (`node server.js`). Not used in production.
 - `js/db.js` — `window.BookDB`. IndexedDB wrapper. CRUD on books + categories. Every write also calls `syncToFirebase()` if signed in. Includes `bookExists` fuzzy match (id, then title+first-author fallback) to avoid duplicates with different ids.
 - `js/firebase.js` — `window.BookFirebase`. Firebase init, auth (Google popup→redirect fallback), `onSnapshot` listener for real-time cloud→local sync, `saveBook`/`removeBook`/`saveSettings`. Firestore doc id sanitizer replaces `/` with `_`.
-- `js/api.js` — `window.BookAPI`. Google Books search (primary), Open Library fallback. ISBN detection, normalization to `{id, title, authors, isbn, coverUrl, publishYear, pageCount}`. Google ids get `gbooks:` prefix; Open Library get `ol:`.
+- `js/api.js` — `window.BookAPI`. The search engine (see "API search" below): queries Google Books + Open Library in parallel, drops junk, collapses duplicate editions, ranks. Exposes `search(q) → {items, stats}`, `isISBN`, `matchKey(title, authors)` (the same key `app.js` uses to flag "already in library"). Google ids get `gbooks:` prefix; Open Library get `ol:`.
 - `js/ui.js` — DOM rendering for book lists, modals, search results, category manager, toasts, sync bar.
 - `js/app.js` — main controller. Wires up event listeners, manages tab switching, search debouncing (400ms), sign-in flow, and the **sync orchestration state machine** (see gotchas).
-- `css/styles.css` — dark theme, mobile-first.
+- `css/styles.css` — dark theme, mobile-first. 2026-09 refresh: deep navy `#0D0D16` + violet glow, glassy blurred header/nav, gradient accent, Fraunces serif (Google Fonts) for the title / detail title / category headers / empty states, cover drop-shadows, pill tab indicator, gold stars.
 - `icons/` — PWA icons (192, 512).
 
 ---
@@ -103,20 +103,29 @@ In `js/app.js`, two flags guard sync:
 
 ---
 
-## API search
+## API search (rewritten 2026-09-09)
 
-`BookAPI.search(query)`:
+`BookAPI.search(query)` returns `{ items, stats }` where `stats = { raw, junk, duplicates, shown, failedSources }`.
+
 1. Detects ISBN (10 or 13 digits with optional dashes/spaces).
-2. Tries Google Books first with `q=isbn:...` or plain `q=...`.
-3. On any failure, falls back to Open Library `search.json`.
-4. Both responses get normalized to the same shape with namespaced ids (`gbooks:` / `ol:`).
-5. Cover URLs are upgraded to https and have `&edge=curl` stripped.
+2. Fires **Google Books (40 results) and Open Library (30 results) at the same time**. If one fails the other still answers; only if both fail does it reject. Open Library is called with `lang=en` + the `editions` sub-doc so we get the *English edition's* title/cover/ISBN (work titles are often in the original language — "Siete breves lecciones de física").
+3. Normalizes both into candidates `{source, rank, id, title, subtitle, authors, isbn, coverUrl, publishYear, pageCount, language, popularity}`.
+4. **Junk filter** — drops summaries, workbooks, study guides, box sets, "N-copy counter display", "Resumen de…" etc. (`JUNK_TITLE` / `JUNK_AUTHOR` regexes). Skipped for ISBN lookups, and a junk word is allowed if the user typed it themselves.
+5. **Relevance score** per candidate: exact title-key match (+4) / prefix / contains, coverage of the typed words in title+author (stopwords ignored; <50% coverage = heavy penalty), source rank, log-scaled popularity (Google `ratingsCount`, OL `readinglog_count`/`want_to_read_count`/`ratings_count`/`edition_count`), cover/ISBN/English bonuses, non-English penalty.
+6. **Dedupe** — candidates are grouped by `matchKey` = `titleKey(title) + '|' + authorKey(authors)` (lowercase, accents stripped, subtitle after `:`/dash removed, bracketed text removed, leading article removed, edition words like "anniversary/revised/large print" removed; author = folded last name of first author) **or** by identical ISBN-13. Each group collapses to its best edition (cover > English > ISBN-13 > page count > Google), gaps filled from siblings, publish year = earliest in the group, score = group max + small bonus for many editions.
+7. Sorts, then cuts the long tail: anything below 45% of the top score (always keeps top 3), max 20.
+8. `app.js` shows the count as "N books · M duplicates hidden" (M = junk + collapsed).
+
+**Google quota:** keyless Google Books calls share a per-IP daily quota and return 429 when it's blown (happened on the dev PC 2026-09-09). The app keeps working on Open Library alone. `GOOGLE_BOOKS_KEY` in `api.js` is empty on purpose — the Firebase web key returns 403 until "Books API" is enabled on the `booktracker-574a6` GCP project. Enable it in the console, paste the key, and the quota jumps to 1,000/day.
+
+**Search race guard:** `app.js` keeps a `searchSeq` counter; a response is ignored if a newer search started while it was in flight.
 
 ---
 
 ## Service worker fetch strategy
 
-- **Firebase / Google API hosts** (`googleapis.com`, `firestore.googleapis.com`, `identitytoolkit.googleapis.com`, `securetoken.googleapis.com`, `accounts.google.com`, `*.firebaseio.com`, `*.firebaseapp.com`, `gstatic.com`, `apis.google.com`, `openlibrary.org`) → **passthrough, no SW handling**. Critical — never cache auth or API traffic.
+- **Firebase / Google API hosts** (`googleapis.com`, `firestore.googleapis.com`, `identitytoolkit.googleapis.com`, `securetoken.googleapis.com`, `accounts.google.com`, `*.firebaseio.com`, `*.firebaseapp.com`, `www.gstatic.com`, `apis.google.com`, `openlibrary.org`) → **passthrough, no SW handling**. Critical — never cache auth or API traffic.
+- **Web fonts** (`fonts.googleapis.com`, `fonts.gstatic.com`) → cache first into `mylibrary-fonts-v1`, so the serif still shows offline after the first load.
 - **Cover images** (`books.google.com`, `covers.openlibrary.org`) → network first, cache fallback. Trimmed to `MAX_COVERS = 200` LRU-ish.
 - **App code** (HTML/CSS/JS, root paths) → network first, cache fallback. This ensures online users always get fresh code.
 - **Other static assets** → cache first, network fallback.
@@ -125,14 +134,24 @@ In `js/app.js`, two flags guard sync:
 
 ## Deploy
 
-There is no production deploy in this repo right now — it's run via `node server.js` locally on port 8080, or could be hosted on any static host. (If you set up a deploy target later, document it here.)
+**Live:** GitHub Pages at https://ciinkwia.github.io/Booktracker/ — serves the **`main`** branch, root path, legacy build (no Actions). This is the installed PWA on ciinkwia's phone.
+
+**Branch gotcha:** local work happens on **`master`**, which has an *unrelated* history from `main` (master was re-initialized 2026-03). As of 2026-09-09 the two are identical in code except master carries `CLAUDE.md` and everything after. To deploy:
+
+```bash
+git push origin master:main --force
+```
+
+Only do that when ciinkwia says "deploy" (his standing rule). Bump `CACHE_NAME` in `sw.js` first.
+
+**Local dev:** `node server.js` → http://localhost:8080. The root `AI Projects/.claude/launch.json` has a `my-library` entry for the in-app browser preview.
 
 ---
 
 ## Gotchas / things to know
 
 ### 1. Bump `CACHE_NAME` in sw.js when shipping JS/CSS/HTML changes
-Currently `mylibrary-v18`. If you don't bump it, the old service worker may serve stale files even though the fetch strategy is network-first (because `cache.put` only updates a successful response — but the activate phase does cache cleanup keyed on the version).
+Currently `mylibrary-v19`. If you don't bump it, the old service worker may serve stale files even though the fetch strategy is network-first (because `cache.put` only updates a successful response — but the activate phase does cache cleanup keyed on the version).
 
 ### 2. Firestore doc IDs can't contain `/`
 Book ids like `ol:/works/OL12345W` would break. `BookFirebase.sanitizeId` replaces `/` with `_` before reading/writing Firestore. Don't bypass this.
@@ -141,7 +160,10 @@ Book ids like `ol:/works/OL12345W` would break. `BookFirebase.sanitizeId` replac
 The sync code in `js/app.js` explicitly ignores an empty `onSnapshot` payload if local has books. This was a real bug — Firestore can momentarily return zero docs during reconnect, and without this guard the app would wipe the user's library.
 
 ### 4. `bookExists` does a title+author fallback
-Same book from Google Books vs Open Library has different ids. `db.js > bookExists` first checks by id, then falls back to a case-insensitive title + first-author match. Keep this when adding new id sources or you'll get duplicates.
+Same book from Google Books vs Open Library has different ids. `db.js > bookExists` first checks by id, then falls back to a case-insensitive title + first-author match. Keep this when adding new id sources or you'll get duplicates. Search results use the stricter `BookAPI.matchKey` (handles subtitles, editions, accents) to show the green "already on list" badge — one `getAllBooks()` per search, not one per result.
+
+### 7. Google Books can 429 at any time
+Keyless quota is per IP. Never make Google the only source again — the parallel fetch in `api.js` is what keeps search alive when it happens.
 
 ### 5. Firestore offline persistence is enabled
 `db.enablePersistence({ synchronizeTabs: true })` runs at init. If multiple tabs are open the second tab will see a console warning — that's expected.
@@ -165,4 +187,4 @@ Same book from Google Books vs Open Library has different ids. `db.js > bookExis
 
 ---
 
-**Last updated:** 2026-04-08 (renamed from "Booktracker" to "My Library"; bumped sw.js cache to mylibrary-v18)
+**Last updated:** 2026-09-09 (search engine rewrite: parallel Google+Open Library, junk filter, edition dedupe, ranking; visual refresh; sw cache v19 + fonts cache; documented the GitHub Pages `main`-vs-`master` deploy)

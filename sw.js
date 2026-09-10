@@ -1,5 +1,6 @@
-var CACHE_NAME = 'mylibrary-v18';
+var CACHE_NAME = 'mylibrary-v19';
 var COVERS_CACHE = 'mylibrary-covers-v1';
+var FONTS_CACHE = 'mylibrary-fonts-v1';
 var MAX_COVERS = 200;
 
 var STATIC_ASSETS = [
@@ -33,7 +34,7 @@ self.addEventListener('activate', function (event) {
     caches.keys().then(function (keys) {
       return Promise.all(
         keys.filter(function (key) {
-          return key !== CACHE_NAME && key !== COVERS_CACHE;
+          return key !== CACHE_NAME && key !== COVERS_CACHE && key !== FONTS_CACHE;
         }).map(function (key) {
           return caches.delete(key);
         })
@@ -59,6 +60,23 @@ self.addEventListener('fetch', function (event) {
       url.hostname === 'www.gstatic.com' ||
       url.hostname === 'apis.google.com' ||
       url.hostname === 'openlibrary.org') {
+    return;
+  }
+
+  // Web fonts: cache first (they never change for a given URL)
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    event.respondWith(
+      caches.match(event.request).then(function (cached) {
+        if (cached) return cached;
+        return fetch(event.request).then(function (response) {
+          if (response.ok) {
+            var clone = response.clone();
+            caches.open(FONTS_CACHE).then(function (cache) { cache.put(event.request, clone); });
+          }
+          return response;
+        });
+      })
+    );
     return;
   }
 

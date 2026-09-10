@@ -3,6 +3,7 @@
 
   var currentList = 'wantToRead';
   var searchDebounceTimer = null;
+  var searchSeq = 0;          // guards against slow responses landing after newer ones
   var DEBOUNCE_MS = 400;
   var syncInProgress = false;
   var initialSyncDone = false;
@@ -207,6 +208,7 @@
       var statusEl = document.getElementById('search-status');
 
       if (!query.trim()) {
+        searchSeq++;
         resultsEl.innerHTML = '';
         statusEl.textContent = '';
         return;
@@ -309,31 +311,40 @@
   async function performSearch(query) {
     var statusEl = document.getElementById('search-status');
     var resultsEl = document.getElementById('search-results');
+    var seq = ++searchSeq;
 
     try {
-      var results = await BookAPI.search(query);
+      var response = await BookAPI.search(query);
+      if (seq !== searchSeq) return;   // a newer search has already started
+      var results = response.items;
+      var stats = response.stats;
 
       if (results.length === 0) {
-        resultsEl.innerHTML = '<p class="no-results">No books found for "' +
-          query.replace(/</g, '&lt;') + '"</p>' + BookUI.renderManualAddForm();
+        resultsEl.innerHTML = '<p class="no-results">No books found for “' +
+          query.replace(/</g, '&lt;') + '”</p>' + BookUI.renderManualAddForm();
         wireManualAddForm();
         statusEl.textContent = '';
         return;
       }
 
-      // Check which results the user already has (by ID or title+author match)
+      // Match results against the library in one pass (by id, then title+author key)
+      var library = await BookDB.getAllBooks();
+      if (seq !== searchSeq) return;
+      var byId = {};
+      var byKey = {};
+      library.forEach(function (b) {
+        byId[b.id] = b.list;
+        byKey[BookAPI.matchKey(b.title, b.authors)] = b.list;
+      });
+
       var owned = [];
       var notOwned = [];
-      for (var i = 0; i < results.length; i++) {
-        var existing = await BookDB.bookExists(results[i].id, results[i].title, results[i].authors);
-        if (existing.list) {
-          owned.push({ result: results[i], list: existing.list });
-        } else {
-          notOwned.push({ result: results[i], list: null });
-        }
-      }
+      results.forEach(function (r) {
+        var list = byId[r.id] || byKey[BookAPI.matchKey(r.title, r.authors)] || null;
+        (list ? owned : notOwned).push({ result: r, list: list });
+      });
 
-      // Show owned books first, then the rest
+      // Show books already in the library first, then the rest
       var sorted = owned.concat(notOwned);
       var htmlParts = [];
       for (var j = 0; j < sorted.length; j++) {
@@ -343,15 +354,21 @@
       htmlParts.push(BookUI.renderManualAddForm());
       resultsEl.innerHTML = htmlParts.join('');
       wireManualAddForm();
-      statusEl.textContent = results.length + ' result' + (results.length !== 1 ? 's' : '');
+
+      var hidden = (stats.duplicates || 0) + (stats.junk || 0);
+      var status = results.length + ' book' + (results.length !== 1 ? 's' : '');
+      if (hidden > 0) status += ' · ' + hidden + ' duplicate' + (hidden !== 1 ? 's' : '') + ' hidden';
+      statusEl.textContent = status;
     } catch (err) {
+      if (seq !== searchSeq) return;
       console.error('Search error details:', err);
       if (!navigator.onLine) {
-        statusEl.textContent = 'You are offline. Search requires an internet connection.';
+        statusEl.textContent = 'You are offline. Search needs an internet connection.';
       } else {
-        statusEl.textContent = 'Search error. Please try again.';
+        statusEl.textContent = 'Search is having trouble right now. Try again in a moment.';
       }
-      resultsEl.innerHTML = '';
+      resultsEl.innerHTML = BookUI.renderManualAddForm();
+      wireManualAddForm();
     }
   }
 
@@ -383,7 +400,7 @@
     if (result.success) {
       BookUI.showToast('Added to ' + BookUI.LIST_NAMES[listName]);
       var actionsEl = card.querySelector('.add-actions');
-      actionsEl.innerHTML = '<span class="on-list-badge">On: ' +
+      actionsEl.innerHTML = '<span class="on-list-badge">' + BookUI.CHECK_ICON +
         BookUI.LIST_NAMES[listName] + '</span>';
       await refreshCounts();
       if (listName === currentList) {

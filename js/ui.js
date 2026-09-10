@@ -21,6 +21,8 @@ window.BookUI = (function () {
     return Math.abs(hash);
   }
 
+  var CHECK_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+
   function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
@@ -51,7 +53,7 @@ window.BookUI = (function () {
       var filled = i <= (rating || 0);
       html += '<span class="star' + (filled ? ' star-filled' : '') + '" data-star="' + i + '">' +
         '<svg width="' + starSize + '" height="' + starSize + '" viewBox="0 0 24 24" fill="' +
-        (filled ? '#FFD700' : 'none') + '" stroke="' + (filled ? '#FFD700' : '#555') +
+        (filled ? '#FFC947' : 'none') + '" stroke="' + (filled ? '#FFC947' : '#4A4A66') +
         '" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
       '</span>';
     }
@@ -107,7 +109,7 @@ window.BookUI = (function () {
     var actionsHtml;
     if (existingList) {
       actionsHtml = '<div class="add-actions">' +
-        '<span class="on-list-badge">On: ' + escapeHtml(LIST_NAMES[existingList]) + '</span>' +
+        '<span class="on-list-badge">' + CHECK_ICON + escapeHtml(LIST_NAMES[existingList]) + '</span>' +
       '</div>';
     } else {
       actionsHtml = '<div class="add-actions">' +
@@ -130,7 +132,7 @@ window.BookUI = (function () {
 
   function renderManualAddForm() {
     return '<div class="manual-add-section">' +
-      '<div class="manual-add-header">Can\'t find your book? Add it manually</div>' +
+      '<div class="manual-add-header">Not listed? Add it by hand</div>' +
       '<div class="manual-add-form">' +
         '<input type="text" id="manual-title" placeholder="Book title (required)" autocomplete="off">' +
         '<input type="text" id="manual-author" placeholder="Author (required)" autocomplete="off">' +
@@ -331,9 +333,9 @@ window.BookUI = (function () {
 
   function renderEmptyState(listName) {
     var messages = {
-      wantToRead: 'No books in your reading wishlist yet.',
-      read: "You haven't logged any finished books yet.",
-      own: 'Your library is empty.'
+      wantToRead: 'Nothing on the wishlist yet.<br>Find something worth reading.',
+      read: 'No finished books logged yet.<br>Every book you close goes here.',
+      own: 'The shelves are empty.<br>Add the books you own.'
     };
 
     return '<div class="empty-state">' +
@@ -434,6 +436,7 @@ window.BookUI = (function () {
     getCachedResult: getCachedResult,
     renderManualAddForm: renderManualAddForm,
     renderCategoryManager: renderCategoryManager,
-    LIST_NAMES: LIST_NAMES
+    LIST_NAMES: LIST_NAMES,
+    CHECK_ICON: CHECK_ICON
   };
 })();
