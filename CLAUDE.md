@@ -42,11 +42,11 @@ Browser (PWA, mobile-first)
 
 - `index.html` — single-page app shell. Loads Firebase compat SDKs from CDN, then `js/db.js` → `js/firebase.js` → `js/api.js` → `js/ui.js` → `js/app.js`.
 - `manifest.json` — PWA manifest. Theme color + background `#0D0D16` (navy, matches the header so the status bar blends in).
-- `sw.js` — service worker. Cache name is **`mylibrary-v19`** — bump this version any time you ship code changes so clients pick them up. Also owns a `mylibrary-fonts-v1` cache (Google Fonts, cache-first).
+- `sw.js` — service worker. Cache name is **`mylibrary-v20`** — bump this version any time you ship code changes so clients pick them up. Also owns a `mylibrary-fonts-v1` cache (Google Fonts, cache-first).
 - `server.js` — trivial 60-line static file server on port 8080 for local dev (`node server.js`). Not used in production.
 - `js/db.js` — `window.BookDB`. IndexedDB wrapper. CRUD on books + categories. Every write also calls `syncToFirebase()` if signed in. Includes `bookExists` fuzzy match (id, then title+first-author fallback) to avoid duplicates with different ids.
 - `js/firebase.js` — `window.BookFirebase`. Firebase init, auth (Google popup→redirect fallback), `onSnapshot` listener for real-time cloud→local sync, `saveBook`/`removeBook`/`saveSettings`. Firestore doc id sanitizer replaces `/` with `_`.
-- `js/api.js` — `window.BookAPI`. The search engine (see "API search" below): queries Google Books + Open Library in parallel, drops junk, collapses duplicate editions, ranks. Exposes `search(q) → {items, stats}`, `isISBN`, `matchKey(title, authors)` (the same key `app.js` uses to flag "already in library"). Google ids get `gbooks:` prefix; Open Library get `ol:`.
+- `js/api.js` — `window.BookAPI`. The search engine (see "API search" below): queries Google Books + Open Library in parallel, drops junk, collapses duplicate editions, ranks. Exposes `search(q) → {items, stats}`, `fetchDescription(book)`, `cleanDescription(raw)`, `isISBN`, `matchKey(title, authors)` (the same key `app.js` uses to flag "already in library"). Google ids get `gbooks:` prefix; Open Library get `ol:`.
 - `js/ui.js` — DOM rendering for book lists, modals, search results, category manager, toasts, sync bar.
 - `js/app.js` — main controller. Wires up event listeners, manages tab switching, search debouncing (400ms), sign-in flow, and the **sync orchestration state machine** (see gotchas).
 - `css/styles.css` — dark theme, mobile-first. 2026-09 refresh: deep navy `#0D0D16` + violet glow, glassy blurred header/nav, gradient accent, Fraunces serif (Google Fonts) for the title / detail title / category headers / empty states, cover drop-shadows, pill tab indicator, gold stars.
@@ -70,7 +70,9 @@ Browser (PWA, mobile-first)
   dateAdded: number,                    // ms epoch
   notes?: string,
   rating?: number,
-  categories?: string[]
+  categories?: string[],
+  description?: string,          // jacket blurb, plain text with \n\n paragraphs ('' = none)
+  descriptionChecked?: number    // ms epoch of the last lookup; set even when nothing was found
 }
 ```
 
@@ -120,6 +122,18 @@ In `js/app.js`, two flags guard sync:
 
 **Search race guard:** `app.js` keeps a `searchSeq` counter; a response is ignored if a newer search started while it was in flight.
 
+### Descriptions (added 2026-09-09, re-added — a simpler version was removed in March "to keep the app simple"; ciinkwia asked for it back)
+
+Every book gets the jacket blurb, stored on the book record as `description` so it syncs and works offline.
+
+- **Where it comes from.** Google Books search results carry `volumeInfo.description`, so Google-sourced results have it immediately. Open Library search has no blurbs. `BookAPI.fetchDescription(book)` fills the gap per book: `ol:` ids → `/works/{id}.json`; `gbooks:` ids → `/volumes/{id}` then Open Library via `/isbn/{isbn}.json` → work, then OL search by title+author; `manual:` ids → OL search by title+author, then Google `intitle:/inauthor:`. First source with a blurb wins; resolves `null` when nobody has one; rejects only if every source errored (so callers can retry later). `cleanDescription` strips HTML, markdown link refs, `----` separators and Open Library's trailing "Contains: …" lists; anything under 20 chars counts as none.
+- **When it's fetched.**
+  1. Adding from search: description travels with the add; if missing, fetched right after in the background.
+  2. Opening a book's detail view: if missing and never checked, shows "Looking up the description…" and swaps the text in when it lands (only if that same book is still open).
+  3. **Backfill** (`backfillDescriptions` in app.js): runs at startup and after each sign-in merge. Walks every book with no `description` and no `descriptionChecked`, one at a time with a 350 ms gap, stops after 3 consecutive failures. This is what filled in the whole existing library. Each hit is one Firestore write.
+- **`descriptionChecked`** is set whenever a lookup *completed* (found or not) so we stop hammering the APIs for books nobody has a blurb for. It is *not* set on network/quota errors, so those retry next launch.
+- **UI.** Detail modal: "About this book" section, clamped to ~7 lines with a More/Less pill (tap the text or the pill). Search results: Google results show a 2-line teaser (tap to expand); Open Library results show a "Show description" link that fetches on tap. Library cards on the three tabs stay clean — no teaser there.
+
 ---
 
 ## Service worker fetch strategy
@@ -151,7 +165,7 @@ Only when ciinkwia says "deploy" (his standing rule). Bump `CACHE_NAME` in `sw.j
 ## Gotchas / things to know
 
 ### 1. Bump `CACHE_NAME` in sw.js when shipping JS/CSS/HTML changes
-Currently `mylibrary-v19`. If you don't bump it, the old service worker may serve stale files even though the fetch strategy is network-first (because `cache.put` only updates a successful response — but the activate phase does cache cleanup keyed on the version).
+Currently `mylibrary-v20`. If you don't bump it, the old service worker may serve stale files even though the fetch strategy is network-first (because `cache.put` only updates a successful response — but the activate phase does cache cleanup keyed on the version).
 
 ### 2. Firestore doc IDs can't contain `/`
 Book ids like `ol:/works/OL12345W` would break. `BookFirebase.sanitizeId` replaces `/` with `_` before reading/writing Firestore. Don't bypass this.
@@ -187,4 +201,4 @@ Keyless quota is per IP. Never make Google the only source again — the paralle
 
 ---
 
-**Last updated:** 2026-09-09 (search engine rewrite: parallel Google+Open Library, junk filter, edition dedupe, ranking; visual refresh; sw cache v19 + fonts cache; deployed to GitHub Pages; branches unified on `main`)
+**Last updated:** 2026-09-09 (book descriptions: fetch + backfill + detail/search UI, `description`/`descriptionChecked` fields, sw v20; earlier same day: search engine rewrite, visual refresh, deploy to GitHub Pages, branches unified on `main`)

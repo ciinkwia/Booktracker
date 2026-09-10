@@ -17,6 +17,7 @@
     setupFirebaseSync();
     await refreshCurrentList();
     await refreshCounts();
+    backfillDescriptions();
   }
 
   function registerServiceWorker() {
@@ -136,6 +137,61 @@
     } finally {
       syncInProgress = false;
       initialSyncDone = true;
+      backfillDescriptions();
+    }
+  }
+
+  // ---- Descriptions ----
+  // Books added before descriptions existed (or from Open Library, which
+  // has none in search) get theirs filled in quietly in the background,
+  // one at a time, so the detail view opens with it already there.
+  var backfillRunning = false;
+
+  async function backfillDescriptions() {
+    if (backfillRunning || !navigator.onLine) return;
+    backfillRunning = true;
+    try {
+      var books = await BookDB.getAllBooks();
+      var todo = books.filter(function (b) { return !b.description && !b.descriptionChecked; });
+      var failures = 0;
+      for (var i = 0; i < todo.length && failures < 3; i++) {
+        try {
+          var desc = await BookAPI.fetchDescription(todo[i]);
+          await BookDB.updateDescription(todo[i].id, desc);
+          failures = 0;
+        } catch (e) {
+          failures++;   // network / quota trouble: leave it unchecked, retry next launch
+        }
+        await new Promise(function (r) { setTimeout(r, 350); });
+      }
+    } catch (err) {
+      console.warn('Description backfill stopped:', err);
+    } finally {
+      backfillRunning = false;
+    }
+  }
+
+  // Fetch one book's description on demand (detail view) and swap it into the modal
+  async function loadDescriptionInto(bookId) {
+    var book = await BookDB.getBook(bookId);
+    if (!book || book.description || book.descriptionChecked) return;
+    var desc = null;
+    try {
+      desc = await BookAPI.fetchDescription(book);
+    } catch (e) {
+      var failedEl = document.querySelector('#detail-desc-section .desc-loading');
+      if (failedEl) failedEl.textContent = 'Couldn\u2019t load the description right now.';
+      return;
+    }
+    await BookDB.updateDescription(bookId, desc);
+    var section = document.querySelector('#detail-desc-section');
+    var modal = document.getElementById('book-detail-modal');
+    var removeBtn = document.querySelector('#book-detail-body [data-action="remove"]');
+    // Only touch the DOM if the same book is still open
+    if (section && !modal.classList.contains('hidden') && removeBtn && removeBtn.dataset.bookId === bookId) {
+      var updated = await BookDB.getBook(bookId);
+      section.innerHTML = '<div class="detail-section-title">About this book</div>' +
+        BookUI.renderDescriptionBlock(updated);
     }
   }
 
@@ -374,6 +430,36 @@
 
   // ---- Search Result Clicks ----
   async function handleSearchResultClick(event) {
+    var descEl = event.target.closest('.result-desc');
+    if (descEl) {
+      var descCard = descEl.closest('[data-book-id]');
+      if (descEl.dataset.action === 'toggle-result-desc') {
+        descEl.classList.toggle('expanded');
+        return;
+      }
+      // Open Library results: fetch the blurb the first time it's asked for
+      var cached = BookUI.getCachedResult(descCard.dataset.bookId);
+      if (!cached || descEl.dataset.loading) return;
+      descEl.dataset.loading = '1';
+      descEl.textContent = 'Loading\u2026';
+      try {
+        var text = await BookAPI.fetchDescription(cached);
+        if (text) {
+          cached.description = text;
+          descEl.textContent = text;
+          descEl.className = 'result-desc expanded';
+          descEl.dataset.action = 'toggle-result-desc';
+        } else {
+          descEl.textContent = 'No description found.';
+          descEl.dataset.action = '';
+        }
+      } catch (e) {
+        descEl.textContent = 'Show description';
+      }
+      delete descEl.dataset.loading;
+      return;
+    }
+
     var addBtn = event.target.closest('[data-action="add"]');
     if (!addBtn) return;
 
@@ -390,6 +476,7 @@
       coverUrl: bookData.coverUrl,
       publishYear: bookData.publishYear,
       pageCount: bookData.pageCount,
+      description: bookData.description || '',
       list: listName,
       dateAdded: Date.now(),
       notes: '',
@@ -399,6 +486,11 @@
 
     if (result.success) {
       BookUI.showToast('Added to ' + BookUI.LIST_NAMES[listName]);
+      if (!bookData.description) {
+        BookAPI.fetchDescription(bookData).then(function (desc) {
+          return BookDB.updateDescription(bookData.id, desc);
+        }).catch(function () { /* backfill will retry later */ });
+      }
       var actionsEl = card.querySelector('.add-actions');
       actionsEl.innerHTML = '<span class="on-list-badge">' + BookUI.CHECK_ICON +
         BookUI.LIST_NAMES[listName] + '</span>';
@@ -423,6 +515,9 @@
     if (!book) return;
     var categories = await BookDB.getCategories();
     BookUI.showDetail(book, categories);
+    if (!book.description && !book.descriptionChecked) {
+      loadDescriptionInto(bookId);
+    }
   }
 
   // ---- Detail Modal Actions ----
@@ -449,6 +544,13 @@
 
     var action = btn.dataset.action;
     var bookId = btn.dataset.bookId;
+
+    if (action === 'toggle-desc') {
+      var wasClamped = btn.classList.toggle('clamped');
+      var toggle = btn.querySelector('.desc-toggle');
+      if (toggle) toggle.textContent = wasClamped ? 'More' : 'Less';
+      return;
+    }
 
     if (action === 'toggle-category') {
       var category = btn.dataset.category;
@@ -637,6 +739,9 @@
 
         if (result.success) {
           BookUI.showToast('Added "' + title + '" to ' + BookUI.LIST_NAMES[listName]);
+          BookAPI.fetchDescription({ id: bookId, title: title, authors: [author] }).then(function (desc) {
+            return BookDB.updateDescription(bookId, desc);
+          }).catch(function () { /* backfill will retry later */ });
           titleInput.value = '';
           authorInput.value = '';
           updateButtons();

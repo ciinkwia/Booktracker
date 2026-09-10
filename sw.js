@@ -1,4 +1,4 @@
-var CACHE_NAME = 'mylibrary-v19';
+var CACHE_NAME = 'mylibrary-v20';
 var COVERS_CACHE = 'mylibrary-covers-v1';
 var FONTS_CACHE = 'mylibrary-fonts-v1';
 var MAX_COVERS = 200;

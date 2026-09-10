@@ -274,6 +274,62 @@ button {
   color: var(--text-tertiary);
 }
 
+/* ---- Description (detail modal) ---- */
+.detail-desc {
+  position: relative;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.detail-desc p + p {
+  margin-top: 10px;
+}
+
+.detail-desc.clamped {
+  max-height: calc(1.55em * 7);
+  overflow: hidden;
+}
+
+.detail-desc.clamped::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3.2em;
+  background: linear-gradient(to bottom, rgba(23, 23, 37, 0), var(--surface) 80%);
+  pointer-events: none;
+}
+
+.desc-toggle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--accent-light);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.detail-desc:not(.clamped) .desc-toggle {
+  position: static;
+  display: inline-block;
+  margin-top: 10px;
+}
+
+.detail-desc-empty {
+  color: var(--text-tertiary);
+  font-style: italic;
+  cursor: default;
+}
+
 /* ---- Star Rating ---- */
 .star-rating {
   display: flex;
@@ -550,6 +606,29 @@ button {
   background: rgba(52, 211, 153, 0.14);
   border: 1px solid rgba(52, 211, 153, 0.35);
   color: var(--success);
+}
+
+.result-desc {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+  margin-top: 1px;
+}
+
+.result-desc.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+.result-desc-empty {
+  color: var(--accent-light);
+  font-weight: 600;
+  font-size: 12px;
 }
 
 /* ---- Detail Modal ---- */

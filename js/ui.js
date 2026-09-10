@@ -29,6 +29,30 @@ window.BookUI = (function () {
     return div.innerHTML;
   }
 
+  // Plain text with blank-line paragraphs -> <p>s
+  function renderParagraphs(text) {
+    return String(text || '').split(/\n{2,}/).map(function (para) {
+      return '<p>' + escapeHtml(para.trim()).replace(/\n/g, '<br>') + '</p>';
+    }).join('');
+  }
+
+  // Description block used in the detail modal. States:
+  //   text present   -> clamped paragraphs + "More" toggle
+  //   checked, none  -> "No description found"
+  //   otherwise      -> "Loading…" (app.js swaps it once fetched)
+  function renderDescriptionBlock(book) {
+    if (book.description) {
+      return '<div class="detail-desc clamped" data-action="toggle-desc">' +
+        renderParagraphs(book.description) +
+        '<button class="desc-toggle" type="button">More</button>' +
+      '</div>';
+    }
+    if (book.descriptionChecked) {
+      return '<div class="detail-desc detail-desc-empty">No description found for this one.</div>';
+    }
+    return '<div class="detail-desc detail-desc-empty desc-loading">Looking up the description\u2026</div>';
+  }
+
   function renderCover(coverUrl, title, size) {
     var isLarge = size === 'large';
     var cls = isLarge ? 'detail-cover' : 'book-cover';
@@ -119,12 +143,21 @@ window.BookUI = (function () {
       '</div>';
     }
 
+    var descHtml;
+    if (result.description) {
+      descHtml = '<div class="result-desc" data-action="toggle-result-desc">' +
+        escapeHtml(result.description) + '</div>';
+    } else {
+      descHtml = '<div class="result-desc result-desc-empty" data-action="load-result-desc">Show description</div>';
+    }
+
     return '<div class="search-result" data-book-id="' + escapeHtml(result.id) + '">' +
       renderCover(result.coverUrl, result.title, 'small') +
       '<div class="book-info">' +
         '<div class="book-title">' + escapeHtml(result.title) + '</div>' +
         '<div class="book-author">' + authors + '</div>' +
         (year ? '<div class="book-year">' + year + '</div>' : '') +
+        descHtml +
         actionsHtml +
       '</div>' +
     '</div>';
@@ -309,6 +342,11 @@ window.BookUI = (function () {
       '</div>' +
     '</div>' +
 
+    '<div class="detail-section" id="detail-desc-section">' +
+      '<div class="detail-section-title">About this book</div>' +
+      renderDescriptionBlock(book) +
+    '</div>' +
+
     ratingHtml +
 
     categoryHtml +
@@ -435,6 +473,7 @@ window.BookUI = (function () {
     clearSearchCache: clearSearchCache,
     getCachedResult: getCachedResult,
     renderManualAddForm: renderManualAddForm,
+    renderDescriptionBlock: renderDescriptionBlock,
     renderCategoryManager: renderCategoryManager,
     LIST_NAMES: LIST_NAMES,
     CHECK_ICON: CHECK_ICON

@@ -265,6 +265,31 @@ window.BookDB = (function () {
     });
   }
 
+  // Save a fetched description (or record that none exists, so we stop asking)
+  function updateDescription(id, description) {
+    return new Promise(async function (resolve, reject) {
+      try {
+        const book = await getBook(id);
+        if (!book) {
+          resolve({ success: false, reason: 'not_found' });
+          return;
+        }
+        book.description = description || '';
+        book.descriptionChecked = Date.now();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put(book);
+        tx.oncomplete = async function () {
+          await syncToFirebase(book);
+          resolve({ success: true });
+        };
+        tx.onerror = function () { reject(tx.error); };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   // Helper: sync a book save to Firebase if signed in
   async function syncToFirebase(book) {
     if (window.BookFirebase && window.BookFirebase.getUser()) {
@@ -397,6 +422,7 @@ window.BookDB = (function () {
     getCounts: getCounts,
     updateNotes: updateNotes,
     updateRating: updateRating,
+    updateDescription: updateDescription,
     replaceAllBooks: replaceAllBooks,
     uploadAllToFirebase: uploadAllToFirebase,
     getCategories: getCategories,

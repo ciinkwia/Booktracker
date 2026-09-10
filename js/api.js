@@ -276,6 +276,10 @@ window.BookAPI = (function () {
         if (!best.isbn && members[j].isbn) best.isbn = members[j].isbn;
         if (!best.pageCount && members[j].pageCount) best.pageCount = members[j].pageCount;
         if (!best.publishYear && members[j].publishYear) best.publishYear = members[j].publishYear;
+        if (!best.description && members[j].description) best.description = members[j].description;
+        else if (best.description && members[j].description && members[j].description.length > best.description.length + 200) {
+          best.description = members[j].description;   // a sibling edition has a fuller blurb
+        }
       }
       // Original publication year is nicer than "this edition's" year
       var years = members.map(function (m) { return m.publishYear; }).filter(Boolean);
@@ -313,6 +317,7 @@ window.BookAPI = (function () {
       coverUrl: c.coverUrl,
       publishYear: c.publishYear,
       pageCount: c.pageCount,
+      description: c.description || null,
       score: c.score
     };
   }
@@ -324,7 +329,7 @@ window.BookAPI = (function () {
       '?q=' + encodeURIComponent(q) +
       '&maxResults=' + GOOGLE_LIMIT +
       '&printType=books' +
-      '&fields=' + encodeURIComponent('items(id,volumeInfo(title,subtitle,authors,publishedDate,industryIdentifiers,imageLinks,pageCount,language,ratingsCount,averageRating))') +
+      '&fields=' + encodeURIComponent('items(id,volumeInfo(title,subtitle,authors,publishedDate,industryIdentifiers,imageLinks,pageCount,language,ratingsCount,averageRating,description))') +
       (GOOGLE_BOOKS_KEY ? '&key=' + GOOGLE_BOOKS_KEY : '');
 
     return fetchJson(url).then(function (data) {
@@ -364,7 +369,8 @@ window.BookAPI = (function () {
       publishYear: info.publishedDate ? parseInt(info.publishedDate.substring(0, 4), 10) || null : null,
       pageCount: info.pageCount || null,
       language: info.language || 'unknown',
-      popularity: (info.ratingsCount || 0) * 5
+      popularity: (info.ratingsCount || 0) * 5,
+      description: cleanDescription(info.description)
     };
   }
 
@@ -431,12 +437,158 @@ window.BookAPI = (function () {
       publishYear: doc.first_publish_year || null,
       pageCount: (ed && ed.number_of_pages) || doc.number_of_pages_median || null,
       language: lang,
-      popularity: pop
+      popularity: pop,
+      description: null   // Open Library search has no blurbs; fetched on demand via fetchDescription()
     };
+  }
+
+  // ---------------------------------------------------------------
+  // Descriptions (the jacket blurb)
+  //
+  // Google Books search already returns one. Open Library search does
+  // not, so fetchDescription() goes and gets it for a single book:
+  //   ol:      -> the work's JSON
+  //   gbooks:  -> the volume's JSON, else Open Library via ISBN / title
+  //   manual:  -> Open Library search by title+author, else Google
+  // Resolves to a string, or null when nobody has a blurb. Rejects only
+  // when every source errored (network / quota) so callers can retry.
+  // ---------------------------------------------------------------
+
+  function cleanDescription(raw) {
+    if (!raw) return null;
+    var text = typeof raw === 'object' ? (raw.value || '') : String(raw);
+    text = text
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+      .replace(/^\s*\[\d+\]:\s*\S+.*$/gm, '')        // markdown link refs: [1]: http://...
+      .replace(/\(\[source\]\[\d+\]\)/gi, '')
+      .replace(/\[([^\]]+)\]\[\d+\]/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/^\s*-{4,}\s*$/gm, '')
+      .replace(/\r/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    // Open Library sometimes appends "Contains: ..." / "Also contained in: ..." lists
+    text = text.replace(/\n+(Also )?contain(s|ed in):[\s\S]*$/i, '').trim();
+    return text.length >= 20 ? text : null;
+  }
+
+  function olWorkDescription(workId) {
+    if (!workId) return Promise.resolve(null);
+    return fetchJson('https://openlibrary.org/works/' + encodeURIComponent(workId) + '.json')
+      .then(function (data) { return cleanDescription(data && data.description); });
+  }
+
+  function olWorkIdFromIsbn(isbn) {
+    if (!isbn) return Promise.resolve(null);
+    return fetch('https://openlibrary.org/isbn/' + encodeURIComponent(cleanISBN(isbn)) + '.json')
+      .then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        var w = data && data.works && data.works[0] && data.works[0].key;
+        return w ? w.replace('/works/', '') : null;
+      });
+  }
+
+  function olWorkIdFromSearch(title, authors) {
+    var q = title + ' ' + ((authors && authors[0]) || '');
+    var url = OPEN_LIBRARY_URL + '?q=' + encodeURIComponent(q) + '&fields=key,title,author_name&limit=5';
+    var want = matchKey(title, authors);
+    return fetchJson(url).then(function (data) {
+      var docs = (data && data.docs) || [];
+      for (var i = 0; i < docs.length; i++) {
+        if (matchKey(docs[i].title, docs[i].author_name) === want) {
+          return (docs[i].key || '').replace('/works/', '') || null;
+        }
+      }
+      return null;
+    });
+  }
+
+  function googleVolumeDescription(volumeId) {
+    var url = GOOGLE_BOOKS_URL + '/' + encodeURIComponent(volumeId) +
+      '?fields=' + encodeURIComponent('volumeInfo(description)') +
+      (GOOGLE_BOOKS_KEY ? '&key=' + GOOGLE_BOOKS_KEY : '');
+    return fetchJson(url).then(function (data) {
+      return cleanDescription(data && data.volumeInfo && data.volumeInfo.description);
+    });
+  }
+
+  function googleSearchDescription(q) {
+    var url = GOOGLE_BOOKS_URL + '?q=' + encodeURIComponent(q) + '&maxResults=5' +
+      '&fields=' + encodeURIComponent('items(volumeInfo(description))') +
+      (GOOGLE_BOOKS_KEY ? '&key=' + GOOGLE_BOOKS_KEY : '');
+    return fetchJson(url).then(function (data) {
+      var items = (data && data.items) || [];
+      var best = null;
+      for (var i = 0; i < items.length; i++) {
+        var d = cleanDescription(items[i].volumeInfo && items[i].volumeInfo.description);
+        if (d && (!best || d.length > best.length)) best = d;
+      }
+      return best;
+    });
+  }
+
+  // Try a list of promise factories in order; first non-null wins.
+  // A failing step is skipped unless every step fails.
+  function firstOf(steps) {
+    var failures = 0;
+    function next(i) {
+      if (i >= steps.length) {
+        if (failures === steps.length) throw new Error('All description sources failed');
+        return null;
+      }
+      return steps[i]().then(function (val) {
+        return val || next(i + 1);
+      }, function (err) {
+        failures++;
+        console.warn('Description source failed:', err && err.message);
+        return next(i + 1);
+      });
+    }
+    return next(0);
+  }
+
+  function fetchDescription(book) {
+    var id = book.id || '';
+    var steps;
+
+    if (id.indexOf('ol:') === 0) {
+      steps = [
+        function () { return olWorkDescription(id.substring(3)); },
+        function () { return book.isbn ? googleSearchDescription('isbn:' + cleanISBN(book.isbn)) : Promise.resolve(null); }
+      ];
+    } else if (id.indexOf('gbooks:') === 0) {
+      steps = [
+        function () { return googleVolumeDescription(id.substring(7)); },
+        function () { return olWorkIdFromIsbn(book.isbn).then(olWorkDescription); },
+        function () { return olWorkIdFromSearch(book.title, book.authors).then(olWorkDescription); }
+      ];
+    } else {
+      steps = [
+        function () { return olWorkIdFromSearch(book.title, book.authors).then(olWorkDescription); },
+        function () {
+          var q = 'intitle:' + book.title + ((book.authors && book.authors[0]) ? ' inauthor:' + book.authors[0] : '');
+          return googleSearchDescription(q);
+        }
+      ];
+    }
+
+    return firstOf(steps);
   }
 
   return {
     search: search,
+    fetchDescription: fetchDescription,
+    cleanDescription: cleanDescription,
     isISBN: isISBN,
     matchKey: matchKey,
     titleKey: titleKey,
