@@ -41,7 +41,7 @@ Browser (PWA, mobile-first)
 ## Key files
 
 - `index.html` — single-page app shell. Loads Firebase compat SDKs from CDN, then `js/db.js` → `js/firebase.js` → `js/api.js` → `js/ui.js` → `js/app.js`.
-- `manifest.json` — PWA manifest. Theme color `#6C63FF`, dark bg `#121212`.
+- `manifest.json` — PWA manifest. Theme color + background `#0D0D16` (navy, matches the header so the status bar blends in).
 - `sw.js` — service worker. Cache name is **`mylibrary-v19`** — bump this version any time you ship code changes so clients pick them up. Also owns a `mylibrary-fonts-v1` cache (Google Fonts, cache-first).
 - `server.js` — trivial 60-line static file server on port 8080 for local dev (`node server.js`). Not used in production.
 - `js/db.js` — `window.BookDB`. IndexedDB wrapper. CRUD on books + categories. Every write also calls `syncToFirebase()` if signed in. Includes `bookExists` fuzzy match (id, then title+first-author fallback) to avoid duplicates with different ids.
